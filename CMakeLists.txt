@@ -10,6 +10,13 @@ else()
     set(PICO_SDK_PATH $ENV{PICO_SDK_PATH} CACHE PATH "Path to the Pico SDK")
 endif()
 
+# Arduino-Pico already provides a suitable ARM GNU toolchain on this machine.
+# An explicit -DPICO_TOOLCHAIN_PATH remains supported for other installations.
+if (NOT DEFINED PICO_TOOLCHAIN_PATH)
+    set(PICO_TOOLCHAIN_PATH "C:/Users/Kohlc/AppData/Local/Arduino15/packages/rp2040/tools/pqt-gcc/4.1.0-1aec55e/bin"
+        CACHE PATH "Directory containing arm-none-eabi-gcc")
+endif()
+
 include(${PICO_SDK_PATH}/external/pico_sdk_import.cmake)
 
 project(eggbert_bringup C CXX ASM)
