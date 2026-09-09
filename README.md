@@ -43,7 +43,8 @@ bundled with the installed Arduino-Pico core when it is present.
 At boot, each LED lights for 300 ms. The OLED then shows **EGGBERT / RP2354A /
 BRINGUP** and **IMU OK** if the IMU answers with `WHO_AM_I = 0x70`. Holding SW5,
 SW2, or SW3 turns on green, yellow, or red respectively. Acceleration values are
-reported at 4 Hz in raw counts (0.061 mg/LSB at the configured +/-2 g scale).
+reported at 4 Hz in raw counts (0.061 mg/LSB at the configured +/-2 g scale) and
+are displayed live on the OLED as X, Y, and Z values.
 
 ## Deliberate exclusions
 
