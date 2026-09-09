@@ -20,3 +20,13 @@
 #ifndef OLED_I2C_ADDRESS
 #define OLED_I2C_ADDRESS    0x3Cu
 #endif
+
+// LSM6DSVQTR (U5), 4-wire SPI on SPI0. See ECE-Main-2026_2026-09-08.net.
+#define IMU_SPI             spi0
+#define IMU_MISO_PIN        16u  // U5 pin 1, SDO/SA0
+#define IMU_CS_PIN          17u  // U5 pin 12, CS
+#define IMU_SCK_PIN         18u  // U5 pin 13, SCL/SPC
+#define IMU_MOSI_PIN        19u  // U5 pin 14, SDA/SDI
+#define IMU_INT2_PIN        20u  // U5 pin 9, INT2
+#define IMU_INT1_PIN        21u  // U5 pin 4, INT1
+#define IMU_SPI_BAUD        1000000u

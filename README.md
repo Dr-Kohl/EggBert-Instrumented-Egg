@@ -1,7 +1,8 @@
 # EggBert RP2354A board bring-up
 
 First firmware for the JLCPCB Instrumented Egg board. It tests the three LEDs,
-three pushbuttons, and the 128x64 I2C OLED while printing results over USB CDC.
+three pushbuttons, LSM6DSVQTR IMU, and the 128x64 I2C OLED while printing results
+over USB CDC.
 
 ## Pin assignment
 
@@ -15,6 +16,11 @@ three pushbuttons, and the 128x64 I2C OLED while printing results over USB CDC.
 | SW3 | 13 | internal pull-up, pressed = 0 |
 | OLED SDA | 24 | I2C0, external 4.7 kOhm pull-up fitted |
 | OLED SCL | 25 | I2C0, external 4.7 kOhm pull-up fitted |
+| LSM6DSV MISO / SDO | 16 | SPI0 RX; U5 pin 1 |
+| LSM6DSV CS | 17 | SPI0 CS; U5 pin 12 |
+| LSM6DSV SCK / SPC | 18 | SPI0 SCK; U5 pin 13 |
+| LSM6DSV MOSI / SDI | 19 | SPI0 TX; U5 pin 14 |
+| LSM6DSV INT2 / INT1 | 20 / 21 | U5 pins 9 / 4; configured as inputs |
 
 The OLED driver targets a 128x64 SSD1306 at `0x3C`. If the display does not
 respond, rebuild with `-DOLED_I2C_ADDRESS=0x3D`.
@@ -35,8 +41,9 @@ bundled with the installed Arduino-Pico core when it is present.
 ## Expected behavior
 
 At boot, each LED lights for 300 ms. The OLED then shows **EGGBERT / RP2354A /
-BRINGUP**. Holding SW5, SW2, or SW3 turns on green, yellow, or red respectively,
-and each transition is logged over USB serial.
+BRINGUP** and **IMU OK** if the IMU answers with `WHO_AM_I = 0x70`. Holding SW5,
+SW2, or SW3 turns on green, yellow, or red respectively. Acceleration values are
+reported at 4 Hz in raw counts (0.061 mg/LSB at the configured +/-2 g scale).
 
 ## Deliberate exclusions
 

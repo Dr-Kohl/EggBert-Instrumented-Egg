@@ -2,6 +2,7 @@
 
 #include "board.h"
 #include "hardware/gpio.h"
+#include "lsm6dsv.h"
 #include "pico/stdlib.h"
 #include "ssd1306.h"
 
@@ -37,7 +38,15 @@ int main(void) {
         ssd1306_show();
     }
 
+    bool imu_ok = lsm6dsv_init();
+    printf("LSM6DSV SPI WHO_AM_I: %s\n", imu_ok ? "0x70 OK" : "NOT FOUND");
+    if (oled_ok) {
+        ssd1306_text(6, imu_ok ? "I M U O K" : "I M U F A I L");
+        ssd1306_show();
+    }
+
     unsigned previous = 0;
+    absolute_time_t next_imu_report = make_timeout_time_ms(250);
     while (true) {
         unsigned pressed = 0;
         for (unsigned i = 0; i < 3; ++i)
@@ -46,6 +55,12 @@ int main(void) {
         if (pressed != previous) {
             printf("Buttons: SW5=%u SW2=%u SW3=%u\n", pressed & 1u, (pressed >> 1) & 1u, (pressed >> 2) & 1u);
             previous = pressed;
+        }
+        if (imu_ok && absolute_time_diff_us(get_absolute_time(), next_imu_report) <= 0) {
+            int16_t x, y, z;
+            if (lsm6dsv_read_accel(&x, &y, &z))
+                printf("Accel raw: X=%d Y=%d Z=%d (0.061 mg/LSB)\n", x, y, z);
+            next_imu_report = make_timeout_time_ms(250);
         }
         sleep_ms(10);
     }

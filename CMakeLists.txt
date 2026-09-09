@@ -24,6 +24,7 @@ pico_sdk_init()
 
 add_executable(eggbert_bringup
     src/main.c
+    src/lsm6dsv.c
     src/ssd1306.c
 )
 
@@ -32,6 +33,7 @@ target_link_libraries(eggbert_bringup PRIVATE
     pico_stdlib
     hardware_gpio
     hardware_i2c
+    hardware_spi
 )
 
 # USB CDC gives a serial log; no physical UART wiring is assumed.
