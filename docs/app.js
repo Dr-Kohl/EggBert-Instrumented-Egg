@@ -2,7 +2,7 @@
 
 const HEADER_BYTES = 32, MAGIC = [0x45, 0x47, 0x47, 0x31];
 const FLAG_TRIGGERED = 1, FLAG_FREEFALL = 2, FLAG_FIFO_OVERRUN = 4;
-let port, capture, captureBytes;
+let port, activeReader, capture, captureBytes;
 const $ = selector => document.querySelector(selector);
 const setStatus = text => { $("#connectionStatus").textContent = text; };
 const setError = (text = "") => { $("#errorStatus").textContent = text; };
@@ -58,24 +58,36 @@ function drawPlot(canvas, series, domain, colors, unit) {
 async function connect() {
   if (!("serial" in navigator)) throw new Error("Web Serial is unavailable. Use Chrome or Edge over HTTPS, or open a saved .egg file.");
   port = await navigator.serial.requestPort(); await port.open({ baudRate: 115200, bufferSize: 65536 });
-  $("#connectButton").textContent = "EggBert connected"; $("#connectButton").disabled = true; $("#downloadButton").disabled = false; setStatus("EggBert connected. Download only after CAPTURE COMPLETE.");
+  $("#connectButton").textContent = "EggBert connected"; $("#connectButton").disabled = true; $("#disconnectButton").disabled = false; $("#downloadButton").disabled = false; setStatus("EggBert connected. Download only after CAPTURE COMPLETE.");
+}
+
+async function disconnect() {
+  if (activeReader) await activeReader.cancel();
+  if (port) await port.close();
+  port = undefined; activeReader = undefined;
+  $("#connectButton").textContent = "Connect EggBert"; $("#connectButton").disabled = false; $("#disconnectButton").disabled = true; $("#downloadButton").disabled = true;
+  setStatus("Device disconnected.");
 }
 
 async function downloadCapture() {
   if (!port) return; setError(""); setStatus("Requesting capture…"); $("#downloadButton").disabled = true;
   const writer = port.writable.getWriter(); await writer.write(new TextEncoder().encode("download\n")); writer.releaseLock();
-  const reader = port.readable.getReader(); let received = new Uint8Array(), required = null, start = -1;
+  const reader = port.readable.getReader(); activeReader = reader; let received = new Uint8Array(), required = null, start = -1;
   try {
     while (required === null || received.length - start < required) {
-      const { value, done } = await reader.read(); if (done) throw new Error("EggBert disconnected during transfer."); received = concat(received, value);
+      const result = await Promise.race([reader.read(), new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 10000))]);
+      if (result.timeout) { await reader.cancel(); throw new Error("EggBert did not start a binary download. Confirm CAPTURE COMPLETE, then try again."); }
+      const { value, done } = result; if (done) throw new Error("EggBert disconnected during transfer."); received = concat(received, value);
       if (start < 0) start = findMagic(received);
+      if (start < 0) { const text = new TextDecoder().decode(received); if (text.includes("ERROR:")) throw new Error(text.trim()); }
       if (start >= 0 && received.length >= start + HEADER_BYTES) { const view = new DataView(received.buffer, received.byteOffset + start, HEADER_BYTES); required = view.getUint16(6, true) + view.getUint32(12, true) * view.getUint16(26, true); setStatus(`Downloading ${required.toLocaleString()} bytes…`); }
     }
     displayCapture(received.slice(start, start + required)); setStatus("Capture downloaded and verified.");
-  } finally { reader.releaseLock(); $("#downloadButton").disabled = false; }
+  } finally { if (activeReader === reader) activeReader = undefined; reader.releaseLock(); $("#downloadButton").disabled = false; }
 }
 
 $("#connectButton").addEventListener("click", () => connect().catch(error => { setError(error.message); setStatus("No device connected."); }));
+$("#disconnectButton").addEventListener("click", () => disconnect().catch(error => setError(error.message)));
 $("#downloadButton").addEventListener("click", () => downloadCapture().catch(error => { setError(error.message); setStatus("Download did not complete."); }));
 $("#fileInput").addEventListener("change", async event => { try { setError(""); displayCapture(new Uint8Array(await event.target.files[0].arrayBuffer())); setStatus("Capture file opened."); } catch (error) { setError(error.message); } event.target.value = ""; });
 $("#saveButton").addEventListener("click", () => { const blob = new Blob([captureBytes], { type: "application/octet-stream" }), link = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: "eggbert-capture.egg" }); link.click(); URL.revokeObjectURL(link.href); });
