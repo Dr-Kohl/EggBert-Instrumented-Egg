@@ -46,6 +46,38 @@ SW2, or SW3 turns on green, yellow, or red respectively. Acceleration values are
 reported at 4 Hz in raw counts (0.061 mg/LSB at the configured +/-2 g scale) and
 are displayed live on the OLED as X, Y, and Z values.
 
+### First capture bring-up
+
+Open the USB CDC serial terminal after boot and type `help`. The following commands
+exercise the first high-rate capture path:
+
+| Command | Result |
+|---|---|
+| `arm` (or `start`) | Clears the previous capture, then waits for one second of stillness before arming event detection. |
+| `stop` | Ends the active capture and preserves the ring-buffer samples already collected. |
+| `status` | Reports state, stored sample count, and whether the IMU FIFO overflowed. |
+| `clear` | Discards the preserved capture. |
+
+This milestone uses the IMU FIFO, a 32-sample watermark interrupt on IMU INT1
+(GPIO21), and a 230,400-byte RAM ring buffer. After one second of magnitude
+between 0.8 g and 1.2 g, it triggers on magnitude below 0.45 g (freefall) or
+above 2.0 g (impact), then preserves three additional seconds of raw data.
+Those first-pass thresholds are intended to be tuned from real tests. It does not
+write flash. After a capture stops, the firmware returns the IMU to its existing
+120 Hz, +/-2 g live-read configuration.
+
+## Capture viewer web app
+
+The static viewer is in [`docs/`](docs/), so this repository can be published
+directly with GitHub Pages. It connects through Web Serial in Chrome or Edge,
+downloads the completed RAM capture, verifies its CRC, and plots X/Y/Z plus
+acceleration magnitude. It can also open and save raw `.egg` capture files.
+
+The `download` USB command sends an `EGG1` version-1 binary frame: a 32-byte
+little-endian header followed by chronological raw signed 16-bit X/Y/Z samples.
+The header contains the sample rate, counts-per-g conversion, event marker,
+post-event sample count, flags, and a payload CRC-32.
+
 ## Deliberate exclusions
 
 GPIO16–21 are reserved for the LSM6DSV IMU; GPIO29 is the OUT+ voltage sense;
