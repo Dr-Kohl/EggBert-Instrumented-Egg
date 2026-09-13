@@ -2,7 +2,7 @@
 
 const HEADER_BYTES = 32, MAGIC = [0x45, 0x47, 0x47, 0x31];
 const FLAG_TRIGGERED = 1, FLAG_FREEFALL = 2, FLAG_FIFO_OVERRUN = 4;
-let port, activeReader, capture, captureBytes;
+let port, activeReader, capture, captureBytes, showLabels = true;
 const $ = selector => document.querySelector(selector);
 const setStatus = text => { $("#connectionStatus").textContent = text; };
 const setError = (text = "") => { $("#errorStatus").textContent = text; };
@@ -39,19 +39,36 @@ function displayCapture(bytes) {
 
 function drawAll() {
   if (!capture) return;
-  drawPlot($("#accelerationChart"), [capture.x, capture.y, capture.z], [-16, 16], ["#c33", "#17834d", "#2463c5"], "g");
+  const events = detectEvents();
+  drawPlot($("#accelerationChart"), [capture.x, capture.y, capture.z], [-16, 16], ["#c33", "#17834d", "#2463c5"], "g", events);
   const maximumMagnitude = capture.magnitude.reduce((maximum, value) => Math.max(maximum, value), 2);
-  drawPlot($("#magnitudeChart"), [capture.magnitude], [0, Math.ceil(maximumMagnitude)], ["#6240a0"], "g");
+  drawPlot($("#magnitudeChart"), [capture.magnitude], [0, Math.ceil(maximumMagnitude)], ["#6240a0"], "g", events);
 }
 
-function drawPlot(canvas, series, domain, colors, unit) {
+function detectEvents() {
+  const events = [];
+  const add = (index, label, color) => { if (index >= 0 && index < capture.sampleCount && !events.some(event => Math.abs(event.index - index) < Math.max(1, capture.sampleRate * 0.04))) events.push({ index, label, color }); };
+  if (capture.triggerOffset !== 0xffffffff && capture.triggerOffset < capture.sampleCount) add(capture.triggerOffset, "Trigger", "#7a5f00");
+  let peakIndex = 0, peak = 0;
+  for (let i = 0; i < capture.sampleCount; i += 1) {
+    if (capture.magnitude[i] > peak) { peak = capture.magnitude[i]; peakIndex = i; }
+    if (Math.abs(capture.x[i]) >= 15.9 || Math.abs(capture.y[i]) >= 15.9 || Math.abs(capture.z[i]) >= 15.9) add(i, "Saturation", "#b00020");
+  }
+  const freefallIndex = capture.magnitude.findIndex(value => value < 0.25);
+  if (freefallIndex >= 0) add(freefallIndex, "Freefall", "#2463c5");
+  if (peak > 2) add(peakIndex, "Peak impact", "#b00020");
+  if (events.length === 0 || peak <= 2) add(0, "Gravity baseline", "#6240a0");
+  return events.sort((a, b) => a.index - b.index);
+}
+
+function drawPlot(canvas, series, domain, colors, unit, events) {
   const ctx = canvas.getContext("2d"), width = canvas.width, height = canvas.height, left = 58, right = 18, top = 18, bottom = 32;
   const plotWidth = width - left - right, plotHeight = height - top - bottom;
   ctx.clearRect(0, 0, width, height); ctx.font = "15px system-ui"; ctx.fillStyle = "#555"; ctx.strokeStyle = "#c8c8c8"; ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i += 1) { const y = top + plotHeight * i / 4, value = domain[1] - (domain[1] - domain[0]) * i / 4; ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(width - right, y); ctx.stroke(); ctx.fillText(`${value.toFixed(1)} ${unit}`, 3, y + 5); }
   const seconds = capture.sampleCount / capture.sampleRate;
   for (let i = 0; i <= 5; i += 1) { const x = left + plotWidth * i / 5; ctx.fillText(`${(seconds * i / 5).toFixed(1)} s`, x - 12, height - 8); }
-  if (capture.triggerOffset !== 0xffffffff && capture.triggerOffset < capture.sampleCount) { const x = left + plotWidth * capture.triggerOffset / Math.max(1, capture.sampleCount - 1); ctx.strokeStyle = "#7a5f00"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, height - bottom); ctx.stroke(); }
+  if (showLabels) events.forEach(event => { const x = left + plotWidth * event.index / Math.max(1, capture.sampleCount - 1); ctx.strokeStyle = event.color; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, height - bottom); ctx.stroke(); ctx.setLineDash([]); ctx.save(); ctx.translate(Math.min(width - 8, Math.max(left + 8, x)), top + 4); ctx.rotate(-Math.PI / 2); ctx.fillStyle = event.color; ctx.font = "bold 13px system-ui"; ctx.fillText(event.label, 0, 0); ctx.restore(); });
   series.forEach((values, index) => { ctx.strokeStyle = colors[index]; ctx.lineWidth = 1.15; ctx.beginPath(); const stride = Math.max(1, Math.ceil(values.length / plotWidth)); for (let i = 0; i < values.length; i += stride) { const x = left + plotWidth * i / Math.max(1, values.length - 1), y = top + plotHeight * (domain[1] - values[i]) / (domain[1] - domain[0]); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); } ctx.stroke(); });
 }
 
@@ -100,5 +117,6 @@ $("#disconnectButton").addEventListener("click", () => disconnect().catch(error 
 $("#downloadButton").addEventListener("click", () => downloadCapture().catch(error => { setError(error.message); setStatus("Download did not complete."); }));
 $("#fileInput").addEventListener("change", async event => { try { setError(""); displayCapture(new Uint8Array(await event.target.files[0].arrayBuffer())); setStatus("Capture file opened."); } catch (error) { setError(error.message); } event.target.value = ""; });
 $("#sampleSelect").addEventListener("change", async event => { const filename = event.target.value; if (!filename) return; try { setError(""); setStatus("Loading sample capture…"); const response = await fetch("sample-data/" + filename); if (!response.ok) throw new Error("Could not load sample capture (" + response.status + ")."); displayCapture(new Uint8Array(await response.arrayBuffer())); setStatus("Sample capture opened."); } catch (error) { setError(error.message); setStatus("Sample did not load."); } event.target.value = ""; });
+$("#showLabels").addEventListener("change", event => { showLabels = event.target.checked; drawAll(); });
 $("#saveButton").addEventListener("click", () => { const blob = new Blob([captureBytes], { type: "application/octet-stream" }), link = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: "eggbert-capture.egg" }); link.click(); URL.revokeObjectURL(link.href); });
 window.addEventListener("resize", drawAll);
