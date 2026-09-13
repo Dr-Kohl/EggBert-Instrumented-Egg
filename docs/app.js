@@ -47,7 +47,7 @@ function drawAll() {
 
 function detectEvents() {
   const events = [];
-  const add = (index, label, color) => { if (index >= 0 && index < capture.sampleCount && !events.some(event => Math.abs(event.index - index) < Math.max(1, capture.sampleRate * 0.04))) events.push({ index, label, color }); };
+  const add = (index, label, color) => { if (index < 0 || index >= capture.sampleCount) return; const nearby = events.find(event => Math.abs(event.index - index) < Math.max(1, capture.sampleRate * 0.04)); if (nearby) { if (!nearby.label.includes(label)) nearby.label += " / " + label; if (color === "#b00020") nearby.color = color; } else events.push({ index, label, color }); };
   if (capture.triggerOffset !== 0xffffffff && capture.triggerOffset < capture.sampleCount) add(capture.triggerOffset, "Trigger", "#7a5f00");
   let peakIndex = 0, peak = 0;
   for (let i = 0; i < capture.sampleCount; i += 1) {
@@ -68,7 +68,7 @@ function drawPlot(canvas, series, domain, colors, unit, events) {
   for (let i = 0; i <= 4; i += 1) { const y = top + plotHeight * i / 4, value = domain[1] - (domain[1] - domain[0]) * i / 4; ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(width - right, y); ctx.stroke(); ctx.fillText(`${value.toFixed(1)} ${unit}`, 3, y + 5); }
   const seconds = capture.sampleCount / capture.sampleRate;
   for (let i = 0; i <= 5; i += 1) { const x = left + plotWidth * i / 5; ctx.fillText(`${(seconds * i / 5).toFixed(1)} s`, x - 12, height - 8); }
-  if (showLabels) events.forEach(event => { const x = left + plotWidth * event.index / Math.max(1, capture.sampleCount - 1); ctx.strokeStyle = event.color; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, height - bottom); ctx.stroke(); ctx.setLineDash([]); ctx.save(); ctx.font = "bold 13px system-ui"; const labelWidth = ctx.measureText(event.label).width; const labelX = Math.min(width - 8, Math.max(left + 8, x)); ctx.translate(labelX, top + labelWidth + 6); ctx.rotate(-Math.PI / 2); ctx.fillStyle = "rgba(255,255,255,0.86)"; ctx.fillRect(-3, -15, labelWidth + 6, 17); ctx.fillStyle = event.color; ctx.fillText(event.label, 0, 0); ctx.restore(); });
+  if (showLabels) events.forEach((event, eventIndex) => { const x = left + plotWidth * event.index / Math.max(1, capture.sampleCount - 1); ctx.strokeStyle = event.color; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, height - bottom); ctx.stroke(); ctx.setLineDash([]); ctx.save(); ctx.font = "bold 13px system-ui"; const labelWidth = ctx.measureText(event.label).width; const row = eventIndex % 3; const labelY = top + 15 + row * 17; const labelX = Math.min(width - labelWidth - 5, Math.max(left + 5, x - labelWidth / 2)); ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.fillRect(labelX - 3, labelY - 13, labelWidth + 6, 17); ctx.fillStyle = event.color; ctx.fillText(event.label, labelX, labelY); ctx.beginPath(); ctx.moveTo(x, labelY + 4); ctx.lineTo(x, top + 2); ctx.stroke(); ctx.restore(); });
   series.forEach((values, index) => { ctx.strokeStyle = colors[index]; ctx.lineWidth = 1.15; ctx.beginPath(); const stride = Math.max(1, Math.ceil(values.length / plotWidth)); for (let i = 0; i < values.length; i += stride) { const x = left + plotWidth * i / Math.max(1, values.length - 1), y = top + plotHeight * (domain[1] - values[i]) / (domain[1] - domain[0]); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); } ctx.stroke(); });
 }
 
