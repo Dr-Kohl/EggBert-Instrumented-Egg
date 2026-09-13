@@ -1,0 +1,1 @@
+Still and tilted: each axis is nonzero, while magnitude remains near 1 g.
