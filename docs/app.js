@@ -3,7 +3,7 @@
 const HEADER_BYTES = 32, MAGIC = [0x45, 0x47, 0x47, 0x31];
 const FLAG_TRIGGERED = 1, FLAG_FREEFALL = 2, FLAG_FIFO_OVERRUN = 4;
 let port, activeReader, capture, captureBytes, showLabels = true;
-let viewStart = 0, viewSeconds = 0, drag;
+let viewStart = 0, viewSeconds = 0, drag, chartMode = "axes";
 const $ = selector => document.querySelector(selector);
 const setStatus = text => { $("#connectionStatus").textContent = text; };
 const setError = (text = "") => { $("#errorStatus").textContent = text; };
@@ -28,6 +28,7 @@ function parseEgg(bytes) {
 
 function displayCapture(bytes) {
   capture = parseEgg(bytes); captureBytes = bytes;
+  chartMode = "axes";
   resetZoom();
   $("#summary").hidden = false; $("#charts").hidden = false;
   $("#sampleCount").textContent = `${capture.sampleCount.toLocaleString()} samples`;
@@ -43,7 +44,9 @@ function captureSeconds() { return capture ? capture.sampleCount / capture.sampl
 function clamp(value, minimum, maximum) { return Math.max(minimum, Math.min(maximum, value)); }
 function updateZoomControl() {
   const ready = !!capture;
-  ["#zoomInButton", "#zoomOutButton", "#panEarlierButton", "#panLaterButton"].forEach(selector => { $(selector).disabled = !ready; });
+  ["#axesButton", "#magnitudeButton", "#zoomInButton", "#zoomOutButton", "#panEarlierButton", "#panLaterButton", "#focusEventButton"].forEach(selector => { $(selector).disabled = !ready; });
+  $("#axesButton").setAttribute("aria-pressed", String(chartMode === "axes"));
+  $("#magnitudeButton").setAttribute("aria-pressed", String(chartMode === "magnitude"));
   $("#resetZoomButton").disabled = !ready || (viewStart === 0 && viewSeconds === captureSeconds());
 }
 function resetZoom() { viewStart = 0; viewSeconds = captureSeconds(); updateZoomControl(); }
@@ -55,13 +58,30 @@ function setView(start, seconds) {
 }
 function zoomAtCenter(factor) { setView(viewStart + viewSeconds * (1 - factor) / 2, viewSeconds * factor); }
 function panView(direction) { setView(viewStart + direction * viewSeconds * 0.5, viewSeconds); }
+function setChartMode(mode) { chartMode = mode; updateZoomControl(); drawAll(); }
+function focusEvent() {
+  const total = captureSeconds();
+  const windowSeconds = Math.min(2, total);
+  let eventIndex = capture.triggerOffset !== 0xffffffff && capture.triggerOffset < capture.sampleCount ? capture.triggerOffset : capture.magnitude.findIndex(value => value < 0.25);
+  if (eventIndex < 0) eventIndex = Math.round(capture.sampleCount / 2);
+  setView(eventIndex / capture.sampleRate - 0.25, windowSeconds);
+}
 
 function drawAll() {
   if (!capture) return;
   const events = detectEvents();
-  drawPlot($("#accelerationChart"), [capture.x, capture.y, capture.z], [-16, 16], ["#c33", "#17834d", "#2463c5"], "g", events);
-  const maximumMagnitude = capture.magnitude.reduce((maximum, value) => Math.max(maximum, value), 2);
-  drawPlot($("#magnitudeChart"), [capture.magnitude], [0, Math.ceil(maximumMagnitude)], ["#6240a0"], "g", events);
+  if (chartMode === "axes") {
+    $("#chartTitle").textContent = "Acceleration";
+    $("#chartLegend").hidden = false;
+    $("#captureChart").setAttribute("aria-label", "Acceleration X, Y, and Z in g over time. Scroll to zoom and drag to pan.");
+    drawPlot($("#captureChart"), [capture.x, capture.y, capture.z], [-16, 16], ["#c33", "#17834d", "#2463c5"], "g", events);
+  } else {
+    $("#chartTitle").textContent = "Acceleration magnitude";
+    $("#chartLegend").hidden = true;
+    $("#captureChart").setAttribute("aria-label", "Acceleration magnitude in g over time. Scroll to zoom and drag to pan.");
+    const maximumMagnitude = capture.magnitude.reduce((maximum, value) => Math.max(maximum, value), 2);
+    drawPlot($("#captureChart"), [capture.magnitude], [0, Math.ceil(maximumMagnitude)], ["#6240a0"], "g", events);
+  }
 }
 
 function detectEvents() {
@@ -96,6 +116,15 @@ function drawPlot(canvas, series, domain, colors, unit, events) {
 }
 
 function addViewportControls(canvas) {
+  canvas.addEventListener("wheel", event => {
+    if (!capture) return;
+    event.preventDefault();
+    const rect = canvas.getBoundingClientRect(), x = (event.clientX - rect.left) * canvas.width / rect.width;
+    const ratio = clamp((x - 58) / (canvas.width - 58 - 18), 0, 1);
+    const anchor = viewStart + ratio * viewSeconds;
+    const nextSeconds = viewSeconds * (event.deltaY < 0 ? 0.8 : 1.25);
+    setView(anchor - ratio * nextSeconds, nextSeconds);
+  }, { passive: false });
   canvas.addEventListener("pointerdown", event => {
     if (!capture || event.button !== 0) return;
     drag = { canvas, x: event.clientX, start: viewStart };
@@ -148,11 +177,14 @@ $("#downloadButton").addEventListener("click", () => downloadCapture().catch(err
 $("#fileInput").addEventListener("change", async event => { try { setError(""); displayCapture(new Uint8Array(await event.target.files[0].arrayBuffer())); setStatus("Capture file opened."); } catch (error) { setError(error.message); } event.target.value = ""; });
 $("#sampleSelect").addEventListener("change", async event => { const filename = event.target.value; if (!filename) return; try { setError(""); setStatus("Loading sample capture…"); const response = await fetch("sample-data/" + filename); if (!response.ok) throw new Error("Could not load sample capture (" + response.status + ")."); displayCapture(new Uint8Array(await response.arrayBuffer())); setStatus("Sample capture opened."); } catch (error) { setError(error.message); setStatus("Sample did not load."); } event.target.value = ""; });
 $("#showLabels").addEventListener("change", event => { showLabels = event.target.checked; drawAll(); });
+$("#axesButton").addEventListener("click", () => setChartMode("axes"));
+$("#magnitudeButton").addEventListener("click", () => setChartMode("magnitude"));
 $("#zoomInButton").addEventListener("click", () => zoomAtCenter(0.6));
 $("#zoomOutButton").addEventListener("click", () => zoomAtCenter(1 / 0.6));
 $("#panEarlierButton").addEventListener("click", () => panView(-1));
 $("#panLaterButton").addEventListener("click", () => panView(1));
+$("#focusEventButton").addEventListener("click", focusEvent);
 $("#resetZoomButton").addEventListener("click", () => { resetZoom(); drawAll(); });
 $("#saveButton").addEventListener("click", () => { const blob = new Blob([captureBytes], { type: "application/octet-stream" }), link = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: "eggbert-capture.egg" }); link.click(); URL.revokeObjectURL(link.href); });
-[$("#accelerationChart"), $("#magnitudeChart")].forEach(addViewportControls);
+addViewportControls($("#captureChart"));
 window.addEventListener("resize", drawAll);
