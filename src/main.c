@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "board.h"
+#include "hardware/adc.h"
 #include "hardware/gpio.h"
 #include "lsm6dsv.h"
 #include "pico/stdlib.h"
@@ -30,6 +31,11 @@ static const uint BUTTONS[] = {BUTTON_1_PIN, BUTTON_2_PIN, BUTTON_3_PIN};
 #define EGG_FLAG_FREEFALL       0x02u
 #define EGG_FLAG_FIFO_OVERRUN   0x04u
 
+#define BATTERY_ADC_INPUT        3u
+#define BATTERY_ADC_SAMPLES      16u
+#define USB_PRESENT_SET_MV     4400u
+#define USB_PRESENT_CLEAR_MV   4300u
+
 // 38,400 samples x 3 axes x 16 bits = 230,400 bytes.  This is intentionally
 // RAM-only for the first capture bring-up; no flash writes occur.
 static lsm6dsv_accel_sample_t capture_samples[CAPTURE_MAX_SAMPLES];
@@ -46,6 +52,20 @@ static bool trigger_was_freefall;
 static bool trigger_detected;
 static absolute_time_t next_capture_poll;
 static bool oled_ok;
+static uint16_t power_out_millivolts;
+static bool usb_power_present;
+
+typedef enum {
+    UI_HOME,
+    UI_RECORD,
+    UI_DROP_TEST,
+    UI_CAPTURE_COMPLETE,
+    UI_CAPTURE_OPTIONS,
+    UI_ERASE_CONFIRM,
+} ui_state_t;
+
+static ui_state_t ui_state = UI_HOME;
+static unsigned ui_selection;
 
 typedef enum {
     CAPTURE_IDLE,
@@ -62,63 +82,153 @@ static void setup_gpio(void) {
         gpio_init(LEDS[i]); gpio_set_dir(LEDS[i], GPIO_OUT); gpio_put(LEDS[i], false);
         gpio_init(BUTTONS[i]); gpio_set_dir(BUTTONS[i], GPIO_IN); gpio_pull_up(BUTTONS[i]);
     }
+    adc_init();
+    adc_gpio_init(29u); // ADC3 senses Out+ through the 100 kOhm / 100 kOhm divider.
+    adc_select_input(BATTERY_ADC_INPUT);
 }
 
 static void leds(unsigned mask) {
     for (unsigned i = 0; i < 3; ++i) gpio_put(LEDS[i], (mask >> i) & 1u);
 }
 
-static void show_capture_ready(void) {
-    if (!oled_ok) return;
+static void ui_draw_power_indicator(void) {
+    if (usb_power_present) {
+        // Tall plug icon, drawn as yellow pixels on the black status rail.
+        ssd1306_ui_fill_rect(4, 7, 9, 10, true);
+        ssd1306_ui_fill_rect(6, 2, 2, 5, true);
+        ssd1306_ui_fill_rect(10, 2, 2, 5, true);
+        ssd1306_ui_fill_rect(7, 17, 3, 12, true);
+        return;
+    }
+
+    unsigned bars = power_out_millivolts >= 4050u ? 3u :
+                    power_out_millivolts >= 3850u ? 2u :
+                    power_out_millivolts >= 3650u ? 1u : 0u;
+    // Tall battery outline and stacked bars, all yellow on the black rail.
+    ssd1306_ui_fill_rect(4, 3, 8, 2, true);
+    ssd1306_ui_fill_rect(2, 5, 2, 24, true);
+    ssd1306_ui_fill_rect(12, 5, 2, 24, true);
+    ssd1306_ui_fill_rect(4, 29, 8, 2, true);
+    ssd1306_ui_fill_rect(6, 0, 4, 3, true);
+    for (unsigned bar = 0; bar < bars; ++bar)
+        ssd1306_ui_fill_rect(5, (uint8_t)(23u - bar * 6u), 6, 3, true);
+}
+
+static void ui_begin(const char *title, const char *rail_status) {
     ssd1306_clear();
-    ssd1306_text(0, "EGGBERT");
-    ssd1306_text(2, "CAPTURE READY");
-    ssd1306_text(4, "USB ARM");
+    // The physical yellow band maps to this black status rail. Only its
+    // meaningful pixels are illuminated, so it does not overpower the UI.
+    ui_draw_power_indicator();
+    ssd1306_ui_text(5, 40, rail_status, true);
+    ssd1306_ui_text(18, 4, title, true);
+}
+
+static void ui_menu_item(uint8_t y, const char *text, bool selected) {
+    if (selected) ssd1306_ui_fill_rect(17, (uint8_t)(y - 1u), 47, 10, true);
+    ssd1306_ui_text(19, y, text, !selected);
+}
+
+static void show_home(void) {
+    if (!oled_ok) return;
+    ui_begin("HOME", "I");
+    ui_menu_item(25, "RECORD", ui_selection == 0);
+    ui_menu_item(38, "RESULTS", ui_selection == 1);
+    ssd1306_ui_text(18, 112, "MID GO", true);
+    ssd1306_show();
+}
+
+static void show_record_menu(void) {
+    if (!oled_ok) return;
+    ui_begin("RECORD", "I");
+    ui_menu_item(25, "DROP", ui_selection == 0);
+    ui_menu_item(38, "BACK", ui_selection == 1);
+    ssd1306_ui_text(18, 112, "MID GO", true);
+    ssd1306_show();
+}
+
+static void show_drop_test_menu(void) {
+    if (!oled_ok) return;
+    ui_begin("DROP", "I");
+    ui_menu_item(25, "ARM", ui_selection == 0);
+    ui_menu_item(38, "BACK", ui_selection == 1);
+    ssd1306_ui_text(18, 112, "MID GO", true);
     ssd1306_show();
 }
 
 static void show_capture_wait_still(void) {
     if (!oled_ok) return;
-    ssd1306_clear();
-    ssd1306_text(0, "EGGBERT");
-    ssd1306_text(2, "CAPTURE");
-    ssd1306_text(4, "HOLD STILL");
-    ssd1306_text(6, "ARMING");
+    ui_begin("RECORD", "A");
+    ssd1306_ui_text(18, 34, "HOLD", true);
+    ssd1306_ui_text(18, 46, "STILL", true);
+    ssd1306_ui_text(18, 112, "ARMING", true);
     ssd1306_show();
 }
 
 static void show_capture_armed(void) {
     if (!oled_ok) return;
-    ssd1306_clear();
-    ssd1306_text(0, "EGGBERT");
-    ssd1306_text(2, "CAPTURE ARMED");
-    ssd1306_text(4, "WAIT EVENT");
-    ssd1306_text(6, "USB STOP");
+    ui_begin("READY", "R");
+    ssd1306_ui_text(18, 36, "WAIT", true);
+    ssd1306_ui_text(18, 48, "DROP", true);
     ssd1306_show();
 }
 
 static void show_capture_event(void) {
     if (!oled_ok) return;
-    ssd1306_clear();
-    ssd1306_text(0, "EGGBERT");
-    ssd1306_text(2, trigger_was_freefall ? "FREEFALL" : "IMPACT");
-    ssd1306_text(4, "EVENT FOUND");
-    ssd1306_text(6, "CAPTURING");
+    ui_begin(trigger_was_freefall ? "FALL" : "IMPACT", "E");
+    ssd1306_ui_text(18, 36, "EVENT", true);
+    ssd1306_ui_text(18, 48, "FOUND", true);
+    ssd1306_ui_text(18, 112, "SAVING", true);
     ssd1306_show();
 }
 
 static void show_capture_complete(void) {
     if (!oled_ok) return;
-    char samples[20];
-    snprintf(samples, sizeof samples, "%lu SAMPLES", (unsigned long)capture_count);
-    ssd1306_clear();
-    ssd1306_text(0, "EGGBERT");
-    ssd1306_text(2, "CAPTURE COMPLETE");
-    ssd1306_text(4, samples);
-    ssd1306_text(6, capture_fifo_overrun ? "FIFO OVER" :
-                 (!trigger_detected ? "NO EVENT" :
-                  (trigger_was_freefall ? "EVENT FALL" : "EVENT IMPACT")));
+    ui_begin("DONE", "D");
+    ssd1306_ui_text(18, 36, "USB", true);
+    ssd1306_ui_text(18, 48, "DL", true);
+    ssd1306_ui_text(18, 112, "MID OPT", true);
     ssd1306_show();
+}
+
+static void show_capture_options(void) {
+    if (!oled_ok) return;
+    ui_begin("SAVED", "D");
+    ui_menu_item(25, "ERASE", ui_selection == 0);
+    ui_menu_item(38, "BACK", ui_selection == 1);
+    ssd1306_ui_text(18, 112, "MID GO", true);
+    ssd1306_show();
+}
+
+static void show_erase_confirm(void) {
+    if (!oled_ok) return;
+    ui_begin("ERASE", "D");
+    ui_menu_item(25, "NO", ui_selection == 0);
+    ui_menu_item(38, "YES", ui_selection == 1);
+    ssd1306_ui_text(18, 112, "MID GO", true);
+    ssd1306_show();
+}
+
+static void show_ui(void) {
+    switch (ui_state) {
+    case UI_HOME: show_home(); break;
+    case UI_RECORD: show_record_menu(); break;
+    case UI_DROP_TEST: show_drop_test_menu(); break;
+    case UI_CAPTURE_COMPLETE: show_capture_complete(); break;
+    case UI_CAPTURE_OPTIONS: show_capture_options(); break;
+    case UI_ERASE_CONFIRM: show_erase_confirm(); break;
+    }
+}
+
+static void sample_power(void) {
+    uint32_t total = 0;
+    for (unsigned i = 0; i < BATTERY_ADC_SAMPLES; ++i) total += adc_read();
+    // 3.3 V reference, 12-bit ADC, and a 2:1 divider from Out+ to ADC3.
+    uint16_t measured_mv = (uint16_t)(((total / BATTERY_ADC_SAMPLES) * 6600u + 2047u) / 4095u);
+    bool previous_usb_state = usb_power_present;
+    power_out_millivolts = measured_mv;
+    if (usb_power_present) usb_power_present = measured_mv >= USB_PRESENT_CLEAR_MV;
+    else usb_power_present = measured_mv > USB_PRESENT_SET_MV;
+    if (oled_ok && previous_usb_state != usb_power_present) show_ui();
 }
 
 static const char *capture_state_name(void) {
@@ -228,6 +338,10 @@ static void download_capture(void) {
 }
 
 static void start_capture(void) {
+    if (capture_complete) {
+        printf("Capture is protected. Erase it from the EggBert menu before rearming.\n");
+        return;
+    }
     capture_count = 0;
     capture_write_index = 0;
     trigger_index = 0;
@@ -245,7 +359,7 @@ static void start_capture(void) {
     capture_state = CAPTURE_WAIT_STILL;
     next_capture_poll = make_timeout_time_ms(5);
     show_capture_wait_still();
-    printf("Capture armed: hold EggBert still for one second, then it will wait for freefall or impact.\n");
+    printf("Capture armed from EggBert menu: hold still for one second, then wait for freefall or impact.\n");
 }
 
 static void finish_capture(const char *reason) {
@@ -254,9 +368,37 @@ static void finish_capture(const char *reason) {
     capture_active = false;
     capture_complete = true;
     capture_state = CAPTURE_COMPLETE;
+    ui_state = UI_CAPTURE_COMPLETE;
+    ui_selection = 0;
     show_capture_complete();
     printf("Capture complete (%s). ", reason);
     print_capture_status();
+}
+
+static void erase_capture(void) {
+    if (capture_active) return;
+    capture_count = 0;
+    capture_write_index = 0;
+    capture_complete = false;
+    capture_fifo_overrun = false;
+    trigger_detected = false;
+    trigger_was_freefall = false;
+    capture_state = CAPTURE_IDLE;
+    ui_state = UI_HOME;
+    ui_selection = 0;
+    show_ui();
+    printf("Capture buffer erased from EggBert menu.\n");
+}
+
+static void update_status_leds(bool imu_ok) {
+    if (!imu_ok) { leds(0x04u); return; }
+    switch (capture_state) {
+    case CAPTURE_WAIT_STILL: leds(0x02u); break;
+    case CAPTURE_WAIT_EVENT: leds(0x01u); break;
+    case CAPTURE_POST_EVENT: leds(0x03u); break;
+    case CAPTURE_COMPLETE: leds(0x04u); break;
+    default: leds(0); break;
+    }
 }
 
 static uint64_t magnitude_squared(const lsm6dsv_accel_sample_t *sample) {
@@ -343,25 +485,17 @@ static void handle_serial_command(void) {
             if (length == 0) continue;
             command[length] = '\0';
             if (strcmp(command, "arm") == 0 || strcmp(command, "start") == 0) {
-                if (capture_active) printf("Capture is already recording.\n");
-                else start_capture();
+                printf("ERROR: arm EggBert using its on-device menu.\n");
             } else if (strcmp(command, "stop") == 0) {
-                finish_capture("stopped by user");
+                printf("ERROR: capture control is on EggBert; serial stop is disabled.\n");
             } else if (strcmp(command, "status") == 0) {
                 print_capture_status();
             } else if (strcmp(command, "download") == 0) {
                 download_capture();
             } else if (strcmp(command, "clear") == 0) {
-                if (capture_active) finish_capture("cleared by user");
-                capture_count = 0;
-                capture_complete = false;
-                capture_fifo_overrun = false;
-                trigger_detected = false;
-                capture_state = CAPTURE_IDLE;
-                show_capture_ready();
-                printf("Capture buffer cleared.\n");
+                printf("ERROR: erase captures using the EggBert menu.\n");
             } else if (strcmp(command, "help") == 0) {
-                printf("Commands: arm (or start), stop, status, download, clear, help\n");
+                printf("Commands: status, download, help. Capture control uses the EggBert menu.\n");
             } else {
                 printf("Unknown command: %s (type help)\n", command);
             }
@@ -370,6 +504,50 @@ static void handle_serial_command(void) {
             if (length < sizeof command - 1u) command[length++] = (char)character;
         }
     }
+}
+
+static void handle_button_press(unsigned button) {
+    if (capture_active) return;
+
+    if (button == 0) {
+        ui_selection = ui_selection == 0 ? 1 : 0;
+        show_ui();
+        return;
+    }
+    if (button == 2) {
+        ui_selection = ui_selection == 0 ? 1 : 0;
+        show_ui();
+        return;
+    }
+    if (button != 1) return;
+
+    switch (ui_state) {
+    case UI_HOME:
+        if (ui_selection == 0) { ui_state = UI_RECORD; ui_selection = 0; }
+        else printf("No capture is stored. Choose RECORD to begin a drop test.\n");
+        break;
+    case UI_RECORD:
+        if (ui_selection == 0) { ui_state = UI_DROP_TEST; ui_selection = 0; }
+        else { ui_state = UI_HOME; ui_selection = 0; }
+        break;
+    case UI_DROP_TEST:
+        if (ui_selection == 0) start_capture();
+        else { ui_state = UI_RECORD; ui_selection = 0; }
+        break;
+    case UI_CAPTURE_COMPLETE:
+        ui_state = UI_CAPTURE_OPTIONS;
+        ui_selection = 0;
+        break;
+    case UI_CAPTURE_OPTIONS:
+        if (ui_selection == 0) { ui_state = UI_ERASE_CONFIRM; ui_selection = 0; }
+        else { ui_state = UI_CAPTURE_COMPLETE; ui_selection = 0; }
+        break;
+    case UI_ERASE_CONFIRM:
+        if (ui_selection == 0) { ui_state = UI_CAPTURE_OPTIONS; ui_selection = 0; }
+        else erase_capture();
+        break;
+    }
+    if (!capture_active) show_ui();
 }
 
 int main(void) {
@@ -383,33 +561,48 @@ int main(void) {
 
     oled_ok = ssd1306_init();
     printf("OLED at 0x%02X: %s\n", OLED_I2C_ADDRESS, oled_ok ? "OK" : "NOT FOUND");
+    sample_power();
     bool imu_ok = lsm6dsv_init();
     printf("LSM6DSV SPI WHO_AM_I: %s\n", imu_ok ? "0x70 OK" : "NOT FOUND");
     if (oled_ok) {
-        ssd1306_clear();
-        ssd1306_text(0, "EGGBERT");
-        ssd1306_text(2, imu_ok ? "IMU OK" : "IMU FAIL");
+        ui_begin("BOOT", imu_ok ? "I" : "X");
+        ssd1306_ui_text(18, 36, imu_ok ? "IMU OK" : "IMU BAD", true);
         ssd1306_show();
     }
 
     if (imu_ok) {
-        show_capture_ready();
-        printf("Capture bring-up ready. Type help, then start in the USB serial terminal.\n");
+        show_ui();
+        printf("Capture bring-up ready. Use the EggBert menu to arm a drop test; type help for serial diagnostics.\n");
     }
 
-    unsigned previous = 0;
+    unsigned stable_pressed = 0;
+    unsigned last_raw_pressed = 0;
+    absolute_time_t buttons_changed_at = get_absolute_time();
     absolute_time_t next_imu_report = make_timeout_time_ms(250);
+    absolute_time_t next_power_sample = make_timeout_time_ms(500);
     while (true) {
         handle_serial_command();
         service_capture();
+        if (!capture_active && absolute_time_diff_us(get_absolute_time(), next_power_sample) <= 0) {
+            sample_power();
+            next_power_sample = make_timeout_time_ms(500);
+        }
         unsigned pressed = 0;
         for (unsigned i = 0; i < 3; ++i)
             if (!gpio_get(BUTTONS[i])) pressed |= 1u << i;
-        leds(pressed);
-        if (pressed != previous) {
+        if (pressed != last_raw_pressed) {
             printf("Buttons: SW5=%u SW2=%u SW3=%u\n", pressed & 1u, (pressed >> 1) & 1u, (pressed >> 2) & 1u);
-            previous = pressed;
+            last_raw_pressed = pressed;
+            buttons_changed_at = get_absolute_time();
         }
+        if (pressed != stable_pressed &&
+            absolute_time_diff_us(buttons_changed_at, get_absolute_time()) >= 25000) {
+            unsigned new_presses = pressed & ~stable_pressed;
+            stable_pressed = pressed;
+            for (unsigned i = 0; i < 3; ++i)
+                if (new_presses & (1u << i)) handle_button_press(i);
+        }
+        update_status_leds(imu_ok);
         if (imu_ok && !capture_active && absolute_time_diff_us(get_absolute_time(), next_imu_report) <= 0) {
             int16_t x, y, z;
             if (lsm6dsv_read_accel(&x, &y, &z)) {

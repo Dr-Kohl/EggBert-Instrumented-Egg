@@ -40,23 +40,37 @@ bundled with the installed Arduino-Pico core when it is present.
 
 ## Expected behavior
 
-At boot, each LED lights for 300 ms. The OLED then shows **EGGBERT / RP2354A /
-BRINGUP** and **IMU OK** if the IMU answers with `WHO_AM_I = 0x70`. Holding SW5,
-SW2, or SW3 turns on green, yellow, or red respectively. Acceleration values are
-reported at 4 Hz in raw counts (0.061 mg/LSB at the configured +/-2 g scale) and
-are displayed live on the OLED as X, Y, and Z values.
+At boot, each LED lights for 300 ms. The OLED then shows the rotated portrait
+**HOME** screen if the IMU answers with `WHO_AM_I = 0x70`. The left yellow rail
+uses yellow-on-black power icons: a vertical battery gauge on battery power or a
+plug when USB power is present. Its one-letter developer marker shows the current
+state (`I`, `A`, `R`, `E`, or `D`). Acceleration values continue to be reported
+over USB serial at 4 Hz in raw counts (0.061 mg/LSB at the live-read scale).
 
-### First capture bring-up
+### On-device capture workflow
 
-Open the USB CDC serial terminal after boot and type `help`. The following commands
-exercise the first high-rate capture path:
+EggBert owns capture control. Use the OLED and three buttons to navigate:
+
+```text
+Home -> Record -> Drop Test -> Arm -> Hold Still -> Ready -> Capture Complete
+```
+
+The top button moves the selection up, the middle button selects it, and the
+bottom button moves it down. At `CAPTURE COMPLETE`, the capture is protected in
+RAM: connect the USB webpage to download it, or use `SELECT = OPTIONS` and the
+two-step `ERASE CAPTURE` confirmation before rearming. A new capture cannot
+overwrite a completed one accidentally.
+
+USB CDC is for download and diagnostics, not capture arming. Type `help` in a
+serial terminal to see the available commands:
 
 | Command | Result |
 |---|---|
-| `arm` (or `start`) | Clears the previous capture, then waits for one second of stillness before arming event detection. |
-| `stop` | Ends the active capture and preserves the ring-buffer samples already collected. |
+| `arm` (or `start`) | Reports that arming must be done from the EggBert menu. |
+| `stop` | Reports that capture control is restricted to the EggBert menu. |
 | `status` | Reports state, stored sample count, and whether the IMU FIFO overflowed. |
-| `clear` | Discards the preserved capture. |
+| `download` | Sends the completed capture in the `EGG1` binary format. |
+| `clear` | Reports that erasing must be done from the EggBert menu. |
 
 This milestone uses the IMU FIFO, a 32-sample watermark interrupt on IMU INT1
 (GPIO21), and a 230,400-byte RAM ring buffer. After one second of magnitude

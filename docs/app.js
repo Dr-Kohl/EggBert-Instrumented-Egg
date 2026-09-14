@@ -75,14 +75,14 @@ function drawPlot(canvas, series, domain, colors, unit, events) {
 async function connect() {
   if (!("serial" in navigator)) throw new Error("Web Serial is unavailable. Use Chrome or Edge over HTTPS, or open a saved .egg file.");
   port = await navigator.serial.requestPort(); await port.open({ baudRate: 115200, bufferSize: 65536 });
-  $("#connectButton").textContent = "EggBert connected"; $("#connectButton").disabled = true; $("#armButton").disabled = false; $("#disconnectButton").disabled = false; $("#downloadButton").disabled = false; setStatus("EggBert connected. Arm it, then perform the test.");
+  $("#connectButton").textContent = "EggBert connected"; $("#connectButton").disabled = true; $("#disconnectButton").disabled = false; $("#downloadButton").disabled = false; setStatus("EggBert connected. Complete the test using EggBert's buttons, then download it here.");
 }
 
 async function disconnect() {
   if (activeReader) await activeReader.cancel();
   if (port) await port.close();
   port = undefined; activeReader = undefined;
-  $("#connectButton").textContent = "Connect EggBert"; $("#connectButton").disabled = false; $("#armButton").disabled = true; $("#disconnectButton").disabled = true; $("#downloadButton").disabled = true;
+  $("#connectButton").textContent = "Connect EggBert"; $("#connectButton").disabled = false; $("#disconnectButton").disabled = true; $("#downloadButton").disabled = true;
   setStatus("Device disconnected.");
 }
 
@@ -103,16 +103,7 @@ async function downloadCapture() {
   } finally { if (activeReader === reader) activeReader = undefined; reader.releaseLock(); $("#downloadButton").disabled = false; }
 }
 
-async function armEggBert() {
-  if (!port) return;
-  const writer = port.writable.getWriter();
-  await writer.write(new TextEncoder().encode("arm\n"));
-  writer.releaseLock();
-  setError(""); setStatus("EggBert is arming. Hold it still until its screen says WAIT EVENT.");
-}
-
 $("#connectButton").addEventListener("click", () => connect().catch(error => { setError(error.message); setStatus("No device connected."); }));
-$("#armButton").addEventListener("click", () => armEggBert().catch(error => setError(error.message)));
 $("#disconnectButton").addEventListener("click", () => disconnect().catch(error => setError(error.message)));
 $("#downloadButton").addEventListener("click", () => downloadCapture().catch(error => { setError(error.message); setStatus("Download did not complete."); }));
 $("#fileInput").addEventListener("change", async event => { try { setError(""); displayCapture(new Uint8Array(await event.target.files[0].arrayBuffer())); setStatus("Capture file opened."); } catch (error) { setError(error.message); } event.target.value = ""; });

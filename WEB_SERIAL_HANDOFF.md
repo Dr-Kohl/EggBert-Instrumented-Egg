@@ -1,14 +1,15 @@
-# Web Serial Handoff — 2026-09-12
+# Web Serial Handoff — 2026-09-14
 
 ## What is working on hardware
 
 - The RP2354 firmware is flashed and visible as **COM24**.
 - Event capture works: a controlled three-inch drop triggered `FREEFALL`.
 - A successful test reported `38400/38400` ring samples and no FIFO overrun.
-- The OLED states work: `CAPTURE READY`, `HOLD STILL`, `WAIT EVENT`,
-  event state, then `CAPTURE COMPLETE`.
-- Firmware recognizes: `arm` / `start`, `stop`, `status`, `download`, `clear`,
-  and `help`.
+- The on-device portrait OLED menu works: `HOME -> RECORD -> DROP -> ARM`, then
+  `HOLD STILL`, `READY`, event state, and `DONE`.
+- A completed capture remains protected until the user intentionally erases it
+  from EggBert's menu. Serial `arm`, `start`, `stop`, and `clear` are refused.
+- Firmware recognizes `status`, `download`, and `help` for USB diagnostics.
 
 ## New serial download protocol
 
@@ -44,8 +45,8 @@ The viewer has since been updated and pushed to:
 - show device `ERROR:` responses instead of waiting forever;
 - cancel after a ten-second no-response timeout;
 - include **Disconnect** to release COM24; and
-- include **Arm EggBert**, so the browser can own COM24 for the complete
-  connect -> arm -> physical test -> download workflow.
+- remove the browser arm control: EggBert's buttons now own recording, while the
+  viewer owns only connection, download, validation, graphing, and saving.
 
 These fixes were pushed as commits `780fa9e` and `ec52cef`, but the complete
 browser-to-device binary download has **not yet been proven end-to-end** on a
@@ -55,10 +56,11 @@ fresh capture.
 
 1. Wait for GitHub Pages to deploy the latest viewer, then hard-reload it.
 2. Ensure no other serial terminal has COM24 open.
-3. In Chrome or Edge, click **Connect EggBert**, select COM24, then click
-   **Arm EggBert**.
-4. Wait for OLED `WAIT EVENT`; run a controlled drop/impact.
-5. Wait for OLED `CAPTURE COMPLETE`; click **Download capture**.
+3. On EggBert, use its buttons to choose `RECORD -> DROP -> ARM`, then wait for
+   OLED `READY` before running a controlled drop/impact.
+4. Wait for OLED `DONE`; in Chrome or Edge, click **Connect EggBert** and select
+   COM24.
+5. Click **Download capture**.
 6. Expected result: summary cards populate, CRC reports verified, and plots
    appear. Save the resulting `.egg` file.
 7. If it fails, record the exact viewer status/error and run the firmware

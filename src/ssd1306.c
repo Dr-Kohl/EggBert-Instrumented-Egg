@@ -8,6 +8,8 @@
 
 #define OLED_WIDTH 128u
 #define OLED_PAGES 8u
+#define UI_WIDTH 64u
+#define UI_HEIGHT 128u
 static uint8_t framebuffer[OLED_WIDTH * OLED_PAGES];
 
 static bool command(uint8_t value) {
@@ -58,6 +60,38 @@ static int glyph_index(char c) {
     if (c >= 'A' && c <= 'Z') return 11 + c - 'A';
     if (c == '-') return 37;
     return 0;
+}
+
+static void ui_pixel_unchecked(uint8_t x, uint8_t y, bool on) {
+    // The requested counterclockwise transform is:
+    // physical_x = 127 - logical_y, physical_y = logical_x.
+    uint8_t physical_x = (uint8_t)(OLED_WIDTH - 1u - y);
+    uint8_t physical_y = x;
+    uint8_t *cell = &framebuffer[(physical_y >> 3) * OLED_WIDTH + physical_x];
+    uint8_t mask = (uint8_t)(1u << (physical_y & 7u));
+    if (on) *cell |= mask;
+    else *cell &= (uint8_t)~mask;
+}
+
+void ssd1306_ui_pixel(uint8_t x, uint8_t y, bool on) {
+    if (x >= UI_WIDTH || y >= UI_HEIGHT) return;
+    ui_pixel_unchecked(x, y, on);
+}
+
+void ssd1306_ui_fill_rect(uint8_t x, uint8_t y, uint8_t width, uint8_t height, bool on) {
+    for (uint8_t row = y; row < UI_HEIGHT && row < (uint8_t)(y + height); ++row)
+        for (uint8_t col = x; col < UI_WIDTH && col < (uint8_t)(x + width); ++col)
+            ui_pixel_unchecked(col, row, on);
+}
+
+void ssd1306_ui_text(uint8_t x, uint8_t y, const char *text, bool on) {
+    while (*text && x + 5u <= UI_WIDTH) {
+        const uint8_t *glyph = glyphs[glyph_index(*text++)];
+        for (uint8_t col = 0; col < 5u; ++col)
+            for (uint8_t row = 0; row < 7u; ++row)
+                if (glyph[col] & (1u << row)) ssd1306_ui_pixel((uint8_t)(x + col), (uint8_t)(y + row), on);
+        x = (uint8_t)(x + 6u);
+    }
 }
 
 void ssd1306_text(uint8_t row, const char *text) {

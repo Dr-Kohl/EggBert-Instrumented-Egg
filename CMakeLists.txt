@@ -32,6 +32,7 @@ target_include_directories(eggbert_bringup PRIVATE include)
 target_link_libraries(eggbert_bringup PRIVATE
     pico_stdlib
     hardware_gpio
+    hardware_adc
     hardware_i2c
     hardware_spi
 )
