@@ -56,7 +56,13 @@ function setView(start, seconds) {
   viewStart = clamp(start, 0, total - viewSeconds);
   updateZoomControl(); drawAll();
 }
-function zoomAtCenter(factor) { setView(viewStart + viewSeconds * (1 - factor) / 2, viewSeconds * factor); }
+function zoomAt(ratio, factor) {
+  const total = captureSeconds();
+  const nextSeconds = clamp(viewSeconds * factor, Math.min(0.02, total), total);
+  const anchor = viewStart + ratio * viewSeconds;
+  setView(anchor - ratio * nextSeconds, nextSeconds);
+}
+function zoomAtCenter(factor) { zoomAt(0.5, factor); }
 function panView(direction) { setView(viewStart + direction * viewSeconds * 0.5, viewSeconds); }
 function setChartMode(mode) { chartMode = mode; updateZoomControl(); drawAll(); }
 function focusEvent() {
@@ -112,7 +118,19 @@ function drawPlot(canvas, series, domain, colors, unit, events) {
   const precision = viewSeconds < 1 ? 2 : 1;
   for (let i = 0; i <= 5; i += 1) { const x = left + plotWidth * i / 5; ctx.fillText(`${(viewStart + viewSeconds * i / 5).toFixed(precision)} s`, x - 12, height - 8); }
   if (showLabels) events.filter(event => event.index >= startIndex && event.index <= endIndex).forEach((event, eventIndex) => { const x = xAt(event.index); ctx.strokeStyle = event.color; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, height - bottom); ctx.stroke(); ctx.setLineDash([]); ctx.save(); ctx.font = "bold 13px system-ui"; const labelWidth = ctx.measureText(event.label).width; const row = eventIndex % 3; const labelY = top + 15 + row * 17; const labelX = Math.min(width - labelWidth - 5, Math.max(left + 5, x - labelWidth / 2)); ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.fillRect(labelX - 3, labelY - 13, labelWidth + 6, 17); ctx.fillStyle = event.color; ctx.fillText(event.label, labelX, labelY); ctx.beginPath(); ctx.moveTo(x, labelY + 4); ctx.lineTo(x, top + 2); ctx.stroke(); ctx.restore(); });
-  series.forEach((values, index) => { ctx.strokeStyle = colors[index]; ctx.lineWidth = 1.15; ctx.beginPath(); const stride = Math.max(1, Math.ceil((endIndex - startIndex + 1) / plotWidth)); for (let i = startIndex; i <= endIndex; i += stride) { const x = xAt(i), y = top + plotHeight * (domain[1] - values[i]) / (domain[1] - domain[0]); if (i === startIndex) ctx.moveTo(x, y); else ctx.lineTo(x, y); } ctx.stroke(); });
+  const visibleSamples = endIndex - startIndex + 1;
+  const showSamples = visibleSamples <= plotWidth / 3;
+  series.forEach((values, index) => {
+    ctx.strokeStyle = colors[index]; ctx.lineWidth = 1.15; ctx.beginPath();
+    const stride = Math.max(1, Math.ceil(visibleSamples / plotWidth));
+    for (let i = startIndex; i <= endIndex; i += stride) { const x = xAt(i), y = top + plotHeight * (domain[1] - values[i]) / (domain[1] - domain[0]); if (i === startIndex) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
+    ctx.stroke();
+    if (showSamples) {
+      ctx.fillStyle = colors[index]; ctx.beginPath();
+      for (let i = startIndex; i <= endIndex; i += 1) { const y = top + plotHeight * (domain[1] - values[i]) / (domain[1] - domain[0]); ctx.moveTo(xAt(i) + 2, y); ctx.arc(xAt(i), y, 2, 0, Math.PI * 2); }
+      ctx.fill();
+    }
+  });
 }
 
 function addViewportControls(canvas) {
@@ -121,9 +139,7 @@ function addViewportControls(canvas) {
     event.preventDefault();
     const rect = canvas.getBoundingClientRect(), x = (event.clientX - rect.left) * canvas.width / rect.width;
     const ratio = clamp((x - 58) / (canvas.width - 58 - 18), 0, 1);
-    const anchor = viewStart + ratio * viewSeconds;
-    const nextSeconds = viewSeconds * (event.deltaY < 0 ? 0.8 : 1.25);
-    setView(anchor - ratio * nextSeconds, nextSeconds);
+    zoomAt(ratio, event.deltaY < 0 ? 0.8 : 1.25);
   }, { passive: false });
   canvas.addEventListener("pointerdown", event => {
     if (!capture || event.button !== 0) return;
