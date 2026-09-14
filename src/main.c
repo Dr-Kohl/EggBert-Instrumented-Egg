@@ -12,17 +12,21 @@ static const uint LEDS[] = {LED_GREEN_PIN, LED_YELLOW_PIN, LED_RED_PIN};
 static const uint BUTTONS[] = {BUTTON_1_PIN, BUTTON_2_PIN, BUTTON_3_PIN};
 
 #define CAPTURE_RATE_HZ       3840u
-#define CAPTURE_SECONDS        10u
+#define CAPTURE_SECONDS         5u
 #define CAPTURE_MAX_SAMPLES   (CAPTURE_RATE_HZ * CAPTURE_SECONDS)
-#define POST_TRIGGER_SAMPLES  (CAPTURE_RATE_HZ * 3u)
+#define PRE_TRIGGER_SAMPLES   (CAPTURE_RATE_HZ / 2u)
+// The trigger sample itself lies between these two windows.
+#define POST_TRIGGER_SAMPLES  (CAPTURE_MAX_SAMPLES - PRE_TRIGGER_SAMPLES - 1u)
 
 // At +/-16 g, the LSM6DSV sensitivity is about 0.488 mg/count.
 #define ACCEL_COUNTS_PER_G     2048u
 #define STILL_MIN_COUNTS       (ACCEL_COUNTS_PER_G * 8u / 10u)
 #define STILL_MAX_COUNTS       (ACCEL_COUNTS_PER_G * 12u / 10u)
 #define FREEFALL_MAX_COUNTS    (ACCEL_COUNTS_PER_G * 45u / 100u)
-#define IMPACT_MIN_COUNTS      (ACCEL_COUNTS_PER_G * 2u)
 #define STILL_REQUIRED_SAMPLES CAPTURE_RATE_HZ
+#define GENTLE_CATCH_START_COUNTS (ACCEL_COUNTS_PER_G * 8u / 10u)
+#define GENTLE_CATCH_SAMPLES      (CAPTURE_RATE_HZ / 2u)
+#define SATURATION_NEAR_COUNTS    (ACCEL_COUNTS_PER_G * 159u / 10u)
 
 #define EGG_FILE_VERSION        1u
 #define EGG_FILE_HEADER_BYTES   32u
@@ -36,12 +40,13 @@ static const uint BUTTONS[] = {BUTTON_1_PIN, BUTTON_2_PIN, BUTTON_3_PIN};
 #define USB_PRESENT_SET_MV     4400u
 #define USB_PRESENT_CLEAR_MV   4300u
 
-// 38,400 samples x 3 axes x 16 bits = 230,400 bytes.  This is intentionally
+// 19,200 samples x 3 axes x 16 bits = 115,200 bytes.  This is intentionally
 // RAM-only for the first capture bring-up; no flash writes occur.
 static lsm6dsv_accel_sample_t capture_samples[CAPTURE_MAX_SAMPLES];
 static lsm6dsv_accel_sample_t fifo_samples[64];
 static size_t capture_count;
 static size_t capture_write_index;
+static size_t capture_oldest_index;
 static size_t trigger_index;
 static uint32_t still_samples;
 static uint32_t post_trigger_samples;
@@ -59,6 +64,8 @@ typedef enum {
     UI_HOME,
     UI_RECORD,
     UI_DROP_TEST,
+    UI_CHALLENGES,
+    UI_GENTLE_CATCH,
     UI_CAPTURE_COMPLETE,
     UI_CAPTURE_OPTIONS,
     UI_ERASE_CONFIRM,
@@ -73,9 +80,16 @@ typedef enum {
     CAPTURE_WAIT_EVENT,
     CAPTURE_POST_EVENT,
     CAPTURE_COMPLETE,
+    CAPTURE_GENTLE_WAIT_FALL,
+    CAPTURE_GENTLE_WAIT_CATCH,
+    CAPTURE_GENTLE_MEASURE,
+    CAPTURE_GENTLE_RESULT,
 } capture_state_t;
 
 static capture_state_t capture_state = CAPTURE_IDLE;
+static uint32_t gentle_measure_samples;
+static uint32_t gentle_peak_axis_counts;
+static bool gentle_saturated;
 
 static void setup_gpio(void) {
     for (unsigned i = 0; i < 3; ++i) {
@@ -132,7 +146,8 @@ static void show_home(void) {
     if (!oled_ok) return;
     ui_begin("HOME", "I");
     ui_menu_item(25, "RECORD", ui_selection == 0);
-    ui_menu_item(38, "RESULTS", ui_selection == 1);
+    ui_menu_item(38, "CATCH", ui_selection == 1);
+    ui_menu_item(51, "RESULTS", ui_selection == 2);
     ssd1306_ui_text(18, 112, "MID GO", true);
     ssd1306_show();
 }
@@ -152,6 +167,56 @@ static void show_drop_test_menu(void) {
     ui_menu_item(25, "ARM", ui_selection == 0);
     ui_menu_item(38, "BACK", ui_selection == 1);
     ssd1306_ui_text(18, 112, "MID GO", true);
+    ssd1306_show();
+}
+
+static void show_challenges_menu(void) {
+    if (!oled_ok) return;
+    ui_begin("GAMES", "I");
+    ui_menu_item(25, "GENTLE", ui_selection == 0);
+    ui_menu_item(38, "BACK", ui_selection == 1);
+    ssd1306_ui_text(18, 112, "MID GO", true);
+    ssd1306_show();
+}
+
+static void show_gentle_ready(void) {
+    if (!oled_ok) return;
+    ui_begin("CATCH", "G");
+    ssd1306_ui_text(18, 36, "READY", true);
+    ssd1306_ui_text(18, 48, "THROW", true);
+    ssd1306_show();
+}
+
+static void show_gentle_fall(void) {
+    if (!oled_ok) return;
+    ui_begin("CATCH", "G");
+    ssd1306_ui_text(18, 36, "FALL", true);
+    ssd1306_ui_text(18, 48, "CATCH", true);
+    ssd1306_show();
+}
+
+static void show_gentle_measure(void) {
+    if (!oled_ok) return;
+    ui_begin("CATCH", "G");
+    ssd1306_ui_text(18, 36, "MEASURE", true);
+    ssd1306_show();
+}
+
+static void show_gentle_result(void) {
+    if (!oled_ok) return;
+    char peak[8];
+    ui_begin(gentle_saturated ? "CLIPPED" : "CATCH", "G");
+    if (gentle_saturated) {
+        ssd1306_ui_text(18, 36, "OVER", true);
+        ssd1306_ui_text(18, 48, "16G", true);
+    } else {
+        snprintf(peak, sizeof peak, "%lu.%luG",
+                 (unsigned long)(gentle_peak_axis_counts / ACCEL_COUNTS_PER_G),
+                 (unsigned long)((gentle_peak_axis_counts % ACCEL_COUNTS_PER_G) * 10u / ACCEL_COUNTS_PER_G));
+        ssd1306_ui_text(18, 36, "MAX AX", true);
+        ssd1306_ui_text(18, 48, peak, true);
+    }
+    ssd1306_ui_text(18, 112, "MID EXIT", true);
     ssd1306_show();
 }
 
@@ -213,6 +278,8 @@ static void show_ui(void) {
     case UI_HOME: show_home(); break;
     case UI_RECORD: show_record_menu(); break;
     case UI_DROP_TEST: show_drop_test_menu(); break;
+    case UI_CHALLENGES: show_challenges_menu(); break;
+    case UI_GENTLE_CATCH: show_gentle_ready(); break;
     case UI_CAPTURE_COMPLETE: show_capture_complete(); break;
     case UI_CAPTURE_OPTIONS: show_capture_options(); break;
     case UI_ERASE_CONFIRM: show_erase_confirm(); break;
@@ -237,6 +304,10 @@ static const char *capture_state_name(void) {
     case CAPTURE_WAIT_EVENT: return "ARMED - WAITING FOR EVENT";
     case CAPTURE_POST_EVENT: return "EVENT - POST CAPTURE";
     case CAPTURE_COMPLETE: return "COMPLETE";
+    case CAPTURE_GENTLE_WAIT_FALL: return "GENTLE CATCH - READY";
+    case CAPTURE_GENTLE_WAIT_CATCH: return "GENTLE CATCH - FREEFALL";
+    case CAPTURE_GENTLE_MEASURE: return "GENTLE CATCH - MEASURING";
+    case CAPTURE_GENTLE_RESULT: return "GENTLE CATCH - RESULT";
     default: return "IDLE";
     }
 }
@@ -254,7 +325,7 @@ static void print_capture_status(void) {
 }
 
 static size_t capture_first_index(void) {
-    return capture_count == CAPTURE_MAX_SAMPLES ? capture_write_index : 0u;
+    return capture_oldest_index;
 }
 
 static const lsm6dsv_accel_sample_t *capture_sample_at(size_t chronological_index) {
@@ -344,6 +415,7 @@ static void start_capture(void) {
     }
     capture_count = 0;
     capture_write_index = 0;
+    capture_oldest_index = 0;
     trigger_index = 0;
     still_samples = 0;
     post_trigger_samples = 0;
@@ -379,6 +451,7 @@ static void erase_capture(void) {
     if (capture_active) return;
     capture_count = 0;
     capture_write_index = 0;
+    capture_oldest_index = 0;
     capture_complete = false;
     capture_fifo_overrun = false;
     trigger_detected = false;
@@ -390,6 +463,48 @@ static void erase_capture(void) {
     printf("Capture buffer erased from EggBert menu.\n");
 }
 
+// This challenge uses the FIFO for timely samples but deliberately never
+// writes the RAM capture buffer. A saved .egg file therefore remains intact.
+static void start_gentle_catch(void) {
+    gentle_measure_samples = 0;
+    gentle_peak_axis_counts = 0;
+    gentle_saturated = false;
+    if (!lsm6dsv_fifo_start()) {
+        printf("ERROR: could not start IMU FIFO for Gentle Catch.\n");
+        return;
+    }
+    capture_active = true;
+    capture_state = CAPTURE_GENTLE_WAIT_FALL;
+    ui_state = UI_GENTLE_CATCH;
+    ui_selection = 0;
+    next_capture_poll = make_timeout_time_ms(5);
+    show_gentle_ready();
+    printf("Gentle Catch started: throw EggBert, then catch it gently.\n");
+}
+
+static void finish_gentle_catch(void) {
+    // Keep sampling after the result is shown. The result remains visible
+    // until the next real freefall begins a new catch attempt.
+    capture_state = CAPTURE_GENTLE_RESULT;
+    show_gentle_result();
+    if (gentle_saturated)
+        printf("Gentle Catch result: sensor exceeded its 16 g axis range.\n");
+    else
+        printf("Gentle Catch result: peak axis %lu.%lu g.\n",
+               (unsigned long)(gentle_peak_axis_counts / ACCEL_COUNTS_PER_G),
+               (unsigned long)((gentle_peak_axis_counts % ACCEL_COUNTS_PER_G) * 10u / ACCEL_COUNTS_PER_G));
+}
+
+static void exit_gentle_catch(void) {
+    if (capture_active) lsm6dsv_fifo_stop();
+    capture_active = false;
+    capture_state = CAPTURE_IDLE;
+    ui_state = UI_CHALLENGES;
+    ui_selection = 0;
+    show_ui();
+    printf("Gentle Catch exited.\n");
+}
+
 static void update_status_leds(bool imu_ok) {
     if (!imu_ok) { leds(0x04u); return; }
     switch (capture_state) {
@@ -397,6 +512,10 @@ static void update_status_leds(bool imu_ok) {
     case CAPTURE_WAIT_EVENT: leds(0x01u); break;
     case CAPTURE_POST_EVENT: leds(0x03u); break;
     case CAPTURE_COMPLETE: leds(0x04u); break;
+    case CAPTURE_GENTLE_WAIT_FALL: leds(0x01u); break;
+    case CAPTURE_GENTLE_WAIT_CATCH: leds(0x02u); break;
+    case CAPTURE_GENTLE_MEASURE: leds(0x03u); break;
+    case CAPTURE_GENTLE_RESULT: leds(0x04u); break;
     default: leds(0); break;
     }
 }
@@ -418,9 +537,77 @@ static void store_capture_sample(const lsm6dsv_accel_sample_t *sample) {
     capture_samples[capture_write_index] = *sample;
     capture_write_index = (capture_write_index + 1u) % CAPTURE_MAX_SAMPLES;
     if (capture_count < CAPTURE_MAX_SAMPLES) ++capture_count;
+    else capture_oldest_index = (capture_oldest_index + 1u) % CAPTURE_MAX_SAMPLES;
+}
+
+static void retain_pretrigger_window(void) {
+    // Keep exactly the rolling half-second before the trigger plus its sample.
+    // This discards the menu/arming delay without copying the large RAM buffer.
+    size_t keep = PRE_TRIGGER_SAMPLES + 1u;
+    if (capture_count < keep) keep = capture_count;
+    capture_oldest_index = (capture_write_index + CAPTURE_MAX_SAMPLES - keep) % CAPTURE_MAX_SAMPLES;
+    capture_count = keep;
+}
+
+static uint32_t sample_peak_axis(const lsm6dsv_accel_sample_t *sample) {
+    int32_t x = sample->x;
+    int32_t y = sample->y;
+    int32_t z = sample->z;
+    uint32_t peak = (uint32_t)(x < 0 ? -x : x);
+    uint32_t axis = (uint32_t)(y < 0 ? -y : y);
+    if (axis > peak) peak = axis;
+    axis = (uint32_t)(z < 0 ? -z : z);
+    return axis > peak ? axis : peak;
+}
+
+static void process_gentle_sample(const lsm6dsv_accel_sample_t *sample) {
+    uint64_t magnitude = magnitude_squared(sample);
+    uint32_t peak_axis = sample_peak_axis(sample);
+
+    if (capture_state == CAPTURE_GENTLE_WAIT_FALL) {
+        if (magnitude < (uint64_t)FREEFALL_MAX_COUNTS * FREEFALL_MAX_COUNTS) {
+            capture_state = CAPTURE_GENTLE_WAIT_CATCH;
+            show_gentle_fall();
+            printf("Gentle Catch: freefall detected; waiting for catch.\n");
+        }
+        return;
+    }
+
+    if (capture_state == CAPTURE_GENTLE_RESULT) {
+        if (magnitude < (uint64_t)FREEFALL_MAX_COUNTS * FREEFALL_MAX_COUNTS) {
+            capture_state = CAPTURE_GENTLE_WAIT_CATCH;
+            gentle_measure_samples = 0;
+            gentle_peak_axis_counts = 0;
+            gentle_saturated = false;
+            show_gentle_fall();
+            printf("Gentle Catch: next freefall detected; ready to measure its catch.\n");
+        }
+        return;
+    }
+
+    if (capture_state == CAPTURE_GENTLE_WAIT_CATCH) {
+        if (magnitude >= (uint64_t)GENTLE_CATCH_START_COUNTS * GENTLE_CATCH_START_COUNTS) {
+            capture_state = CAPTURE_GENTLE_MEASURE;
+            gentle_measure_samples = 1;
+            gentle_peak_axis_counts = peak_axis;
+            gentle_saturated = peak_axis >= SATURATION_NEAR_COUNTS;
+            show_gentle_measure();
+        }
+        return;
+    }
+
+    if (capture_state == CAPTURE_GENTLE_MEASURE) {
+        if (peak_axis > gentle_peak_axis_counts) gentle_peak_axis_counts = peak_axis;
+        if (peak_axis >= SATURATION_NEAR_COUNTS) gentle_saturated = true;
+        if (++gentle_measure_samples >= GENTLE_CATCH_SAMPLES) finish_gentle_catch();
+    }
 }
 
 static void process_capture_sample(const lsm6dsv_accel_sample_t *sample) {
+    if (capture_state >= CAPTURE_GENTLE_WAIT_FALL) {
+        process_gentle_sample(sample);
+        return;
+    }
     store_capture_sample(sample);
     uint64_t magnitude = magnitude_squared(sample);
 
@@ -438,16 +625,16 @@ static void process_capture_sample(const lsm6dsv_accel_sample_t *sample) {
     }
 
     if (capture_state == CAPTURE_WAIT_EVENT) {
-        if (magnitude < (uint64_t)FREEFALL_MAX_COUNTS * FREEFALL_MAX_COUNTS ||
-            magnitude > (uint64_t)IMPACT_MIN_COUNTS * IMPACT_MIN_COUNTS) {
+        if (magnitude < (uint64_t)FREEFALL_MAX_COUNTS * FREEFALL_MAX_COUNTS) {
             trigger_detected = true;
-            trigger_was_freefall = magnitude < (uint64_t)FREEFALL_MAX_COUNTS * FREEFALL_MAX_COUNTS;
+            trigger_was_freefall = true;
             trigger_index = capture_write_index == 0 ? CAPTURE_MAX_SAMPLES - 1u : capture_write_index - 1u;
+            retain_pretrigger_window();
             post_trigger_samples = 0;
             capture_state = CAPTURE_POST_EVENT;
             show_capture_event();
-            printf("Event trigger: %s. Capturing %u post-event samples.\n",
-                   trigger_was_freefall ? "FREEFALL" : "IMPACT", POST_TRIGGER_SAMPLES);
+            printf("Freefall trigger: keeping %u pre-trigger and %u post-trigger samples.\n",
+                   PRE_TRIGGER_SAMPLES, POST_TRIGGER_SAMPLES);
         }
         return;
     }
@@ -507,15 +694,25 @@ static void handle_serial_command(void) {
 }
 
 static void handle_button_press(unsigned button) {
-    if (capture_active) return;
+    if (capture_active) {
+        if (ui_state == UI_GENTLE_CATCH && button == 1) exit_gentle_catch();
+        return;
+    }
+
+    if (capture_state == CAPTURE_GENTLE_RESULT) {
+        if (button == 1) exit_gentle_catch();
+        return;
+    }
 
     if (button == 0) {
-        ui_selection = ui_selection == 0 ? 1 : 0;
+        unsigned count = ui_state == UI_HOME ? 3u : 2u;
+        ui_selection = (ui_selection + count - 1u) % count;
         show_ui();
         return;
     }
     if (button == 2) {
-        ui_selection = ui_selection == 0 ? 1 : 0;
+        unsigned count = ui_state == UI_HOME ? 3u : 2u;
+        ui_selection = (ui_selection + 1u) % count;
         show_ui();
         return;
     }
@@ -524,6 +721,8 @@ static void handle_button_press(unsigned button) {
     switch (ui_state) {
     case UI_HOME:
         if (ui_selection == 0) { ui_state = UI_RECORD; ui_selection = 0; }
+        else if (ui_selection == 1) { ui_state = UI_CHALLENGES; ui_selection = 0; }
+        else if (capture_complete) { ui_state = UI_CAPTURE_COMPLETE; ui_selection = 0; }
         else printf("No capture is stored. Choose RECORD to begin a drop test.\n");
         break;
     case UI_RECORD:
@@ -533,6 +732,10 @@ static void handle_button_press(unsigned button) {
     case UI_DROP_TEST:
         if (ui_selection == 0) start_capture();
         else { ui_state = UI_RECORD; ui_selection = 0; }
+        break;
+    case UI_CHALLENGES:
+        if (ui_selection == 0) start_gentle_catch();
+        else { ui_state = UI_HOME; ui_selection = 0; }
         break;
     case UI_CAPTURE_COMPLETE:
         ui_state = UI_CAPTURE_OPTIONS;

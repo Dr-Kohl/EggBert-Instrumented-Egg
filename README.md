@@ -61,6 +61,19 @@ RAM: connect the USB webpage to download it, or use `SELECT = OPTIONS` and the
 two-step `ERASE CAPTURE` confirmation before rearming. A new capture cannot
 overwrite a completed one accidentally.
 
+### Gentle Catch game
+
+`Home -> Catch -> Gentle` starts a feedback-only catching challenge. EggBert
+waits for freefall, detects the following catch, measures the next 0.5 seconds,
+and displays the peak **axis** acceleration. `CLIPPED / OVER 16G` means an axis
+reached the sensor's measurement limit, so the true impact was at least that
+large. The result stays on screen until EggBert next experiences freefall; that
+freefall begins the next catch attempt. Press the middle button at any time to
+leave the game.
+
+The game never writes the RAM capture buffer, so it cannot overwrite a saved
+`.egg` capture that is awaiting download or deliberate erasure.
+
 USB CDC is for download and diagnostics, not capture arming. Type `help` in a
 serial terminal to see the available commands:
 
@@ -73,12 +86,14 @@ serial terminal to see the available commands:
 | `clear` | Reports that erasing must be done from the EggBert menu. |
 
 This milestone uses the IMU FIFO, a 32-sample watermark interrupt on IMU INT1
-(GPIO21), and a 230,400-byte RAM ring buffer. After one second of magnitude
-between 0.8 g and 1.2 g, it triggers on magnitude below 0.45 g (freefall) or
-above 2.0 g (impact), then preserves three additional seconds of raw data.
-Those first-pass thresholds are intended to be tuned from real tests. It does not
-write flash. After a capture stops, the firmware returns the IMU to its existing
-120 Hz, +/-2 g live-read configuration.
+(GPIO21), and a 115,200-byte RAM ring buffer. After one second of magnitude
+between 0.8 g and 1.2 g, it triggers only on magnitude below 0.45 g (freefall).
+The downloaded recording is always five seconds: 0.5 seconds before freefall
+and about 4.5 seconds afterward. This removes the menu/arming delay and avoids
+an accidental trigger from the throwing motion. Those first-pass thresholds are
+intended to be tuned from real tests. It does not write flash. After a capture
+stops, the firmware returns the IMU to its existing 120 Hz, +/-2 g live-read
+configuration.
 
 ## Capture viewer web app
 

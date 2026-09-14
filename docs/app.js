@@ -3,6 +3,7 @@
 const HEADER_BYTES = 32, MAGIC = [0x45, 0x47, 0x47, 0x31];
 const FLAG_TRIGGERED = 1, FLAG_FREEFALL = 2, FLAG_FIFO_OVERRUN = 4;
 let port, activeReader, capture, captureBytes, showLabels = true;
+let viewStart = 0, viewSeconds = 0, drag;
 const $ = selector => document.querySelector(selector);
 const setStatus = text => { $("#connectionStatus").textContent = text; };
 const setError = (text = "") => { $("#errorStatus").textContent = text; };
@@ -27,6 +28,7 @@ function parseEgg(bytes) {
 
 function displayCapture(bytes) {
   capture = parseEgg(bytes); captureBytes = bytes;
+  resetZoom();
   $("#summary").hidden = false; $("#charts").hidden = false;
   $("#sampleCount").textContent = `${capture.sampleCount.toLocaleString()} samples`;
   $("#sampleRate").textContent = `${capture.sampleRate.toLocaleString()} Hz`;
@@ -35,6 +37,17 @@ function displayCapture(bytes) {
   $("#integrity").textContent = capture.validCrc ? "CRC verified" : "CRC FAILED";
   $("#integrity").style.color = capture.validCrc ? "" : "#b00020";
   $("#saveButton").disabled = false; drawAll();
+}
+
+function captureSeconds() { return capture ? capture.sampleCount / capture.sampleRate : 0; }
+function clamp(value, minimum, maximum) { return Math.max(minimum, Math.min(maximum, value)); }
+function updateZoomControl() { $("#resetZoomButton").disabled = !capture || (viewStart === 0 && viewSeconds === captureSeconds()); }
+function resetZoom() { viewStart = 0; viewSeconds = captureSeconds(); updateZoomControl(); }
+function setView(start, seconds) {
+  const total = captureSeconds();
+  viewSeconds = clamp(seconds, Math.min(0.02, total), total);
+  viewStart = clamp(start, 0, total - viewSeconds);
+  updateZoomControl(); drawAll();
 }
 
 function drawAll() {
@@ -64,12 +77,49 @@ function detectEvents() {
 function drawPlot(canvas, series, domain, colors, unit, events) {
   const ctx = canvas.getContext("2d"), width = canvas.width, height = canvas.height, left = 58, right = 18, top = 18, bottom = 32;
   const plotWidth = width - left - right, plotHeight = height - top - bottom;
+  const startIndex = Math.max(0, Math.floor(viewStart * capture.sampleRate));
+  const endIndex = Math.min(capture.sampleCount - 1, Math.ceil((viewStart + viewSeconds) * capture.sampleRate));
+  const timeAt = index => index / capture.sampleRate;
+  const xAt = index => left + plotWidth * (timeAt(index) - viewStart) / viewSeconds;
   ctx.clearRect(0, 0, width, height); ctx.font = "15px system-ui"; ctx.fillStyle = "#555"; ctx.strokeStyle = "#c8c8c8"; ctx.lineWidth = 1;
   for (let i = 0; i <= 4; i += 1) { const y = top + plotHeight * i / 4, value = domain[1] - (domain[1] - domain[0]) * i / 4; ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(width - right, y); ctx.stroke(); ctx.fillText(`${value.toFixed(1)} ${unit}`, 3, y + 5); }
-  const seconds = capture.sampleCount / capture.sampleRate;
-  for (let i = 0; i <= 5; i += 1) { const x = left + plotWidth * i / 5; ctx.fillText(`${(seconds * i / 5).toFixed(1)} s`, x - 12, height - 8); }
-  if (showLabels) events.forEach((event, eventIndex) => { const x = left + plotWidth * event.index / Math.max(1, capture.sampleCount - 1); ctx.strokeStyle = event.color; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, height - bottom); ctx.stroke(); ctx.setLineDash([]); ctx.save(); ctx.font = "bold 13px system-ui"; const labelWidth = ctx.measureText(event.label).width; const row = eventIndex % 3; const labelY = top + 15 + row * 17; const labelX = Math.min(width - labelWidth - 5, Math.max(left + 5, x - labelWidth / 2)); ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.fillRect(labelX - 3, labelY - 13, labelWidth + 6, 17); ctx.fillStyle = event.color; ctx.fillText(event.label, labelX, labelY); ctx.beginPath(); ctx.moveTo(x, labelY + 4); ctx.lineTo(x, top + 2); ctx.stroke(); ctx.restore(); });
-  series.forEach((values, index) => { ctx.strokeStyle = colors[index]; ctx.lineWidth = 1.15; ctx.beginPath(); const stride = Math.max(1, Math.ceil(values.length / plotWidth)); for (let i = 0; i < values.length; i += stride) { const x = left + plotWidth * i / Math.max(1, values.length - 1), y = top + plotHeight * (domain[1] - values[i]) / (domain[1] - domain[0]); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); } ctx.stroke(); });
+  const precision = viewSeconds < 1 ? 2 : 1;
+  for (let i = 0; i <= 5; i += 1) { const x = left + plotWidth * i / 5; ctx.fillText(`${(viewStart + viewSeconds * i / 5).toFixed(precision)} s`, x - 12, height - 8); }
+  if (showLabels) events.filter(event => event.index >= startIndex && event.index <= endIndex).forEach((event, eventIndex) => { const x = xAt(event.index); ctx.strokeStyle = event.color; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, height - bottom); ctx.stroke(); ctx.setLineDash([]); ctx.save(); ctx.font = "bold 13px system-ui"; const labelWidth = ctx.measureText(event.label).width; const row = eventIndex % 3; const labelY = top + 15 + row * 17; const labelX = Math.min(width - labelWidth - 5, Math.max(left + 5, x - labelWidth / 2)); ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.fillRect(labelX - 3, labelY - 13, labelWidth + 6, 17); ctx.fillStyle = event.color; ctx.fillText(event.label, labelX, labelY); ctx.beginPath(); ctx.moveTo(x, labelY + 4); ctx.lineTo(x, top + 2); ctx.stroke(); ctx.restore(); });
+  series.forEach((values, index) => { ctx.strokeStyle = colors[index]; ctx.lineWidth = 1.15; ctx.beginPath(); const stride = Math.max(1, Math.ceil((endIndex - startIndex + 1) / plotWidth)); for (let i = startIndex; i <= endIndex; i += stride) { const x = xAt(i), y = top + plotHeight * (domain[1] - values[i]) / (domain[1] - domain[0]); if (i === startIndex) ctx.moveTo(x, y); else ctx.lineTo(x, y); } ctx.stroke(); });
+}
+
+function pointerRatio(canvas, event) {
+  const rect = canvas.getBoundingClientRect(), x = (event.clientX - rect.left) * canvas.width / rect.width;
+  return clamp((x - 58) / (canvas.width - 58 - 18), 0, 1);
+}
+
+function addViewportControls(canvas) {
+  canvas.addEventListener("wheel", event => {
+    if (!capture) return;
+    event.preventDefault();
+    if (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+      const delta = (event.deltaX || event.deltaY) * viewSeconds / 500;
+      setView(viewStart + delta, viewSeconds);
+      return;
+    }
+    const ratio = pointerRatio(canvas, event), anchor = viewStart + ratio * viewSeconds;
+    const nextSeconds = viewSeconds * (event.deltaY < 0 ? 0.8 : 1.25);
+    setView(anchor - ratio * nextSeconds, nextSeconds);
+  }, { passive: false });
+  canvas.addEventListener("pointerdown", event => {
+    if (!capture || event.button !== 0) return;
+    drag = { canvas, x: event.clientX, start: viewStart };
+    canvas.setPointerCapture(event.pointerId);
+  });
+  canvas.addEventListener("pointermove", event => {
+    if (!drag || drag.canvas !== canvas) return;
+    const rect = canvas.getBoundingClientRect(), pixels = (event.clientX - drag.x) * canvas.width / rect.width;
+    const seconds = pixels * viewSeconds / (canvas.width - 58 - 18);
+    setView(drag.start - seconds, viewSeconds);
+  });
+  const stopDragging = event => { if (drag && drag.canvas === canvas) { if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId); drag = undefined; } };
+  canvas.addEventListener("pointerup", stopDragging); canvas.addEventListener("pointercancel", stopDragging);
 }
 
 async function connect() {
@@ -109,5 +159,7 @@ $("#downloadButton").addEventListener("click", () => downloadCapture().catch(err
 $("#fileInput").addEventListener("change", async event => { try { setError(""); displayCapture(new Uint8Array(await event.target.files[0].arrayBuffer())); setStatus("Capture file opened."); } catch (error) { setError(error.message); } event.target.value = ""; });
 $("#sampleSelect").addEventListener("change", async event => { const filename = event.target.value; if (!filename) return; try { setError(""); setStatus("Loading sample capture…"); const response = await fetch("sample-data/" + filename); if (!response.ok) throw new Error("Could not load sample capture (" + response.status + ")."); displayCapture(new Uint8Array(await response.arrayBuffer())); setStatus("Sample capture opened."); } catch (error) { setError(error.message); setStatus("Sample did not load."); } event.target.value = ""; });
 $("#showLabels").addEventListener("change", event => { showLabels = event.target.checked; drawAll(); });
+$("#resetZoomButton").addEventListener("click", () => { resetZoom(); drawAll(); });
 $("#saveButton").addEventListener("click", () => { const blob = new Blob([captureBytes], { type: "application/octet-stream" }), link = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: "eggbert-capture.egg" }); link.click(); URL.revokeObjectURL(link.href); });
+[$("#accelerationChart"), $("#magnitudeChart")].forEach(addViewportControls);
 window.addEventListener("resize", drawAll);
