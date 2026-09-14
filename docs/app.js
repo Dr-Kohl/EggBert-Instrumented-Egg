@@ -41,7 +41,11 @@ function displayCapture(bytes) {
 
 function captureSeconds() { return capture ? capture.sampleCount / capture.sampleRate : 0; }
 function clamp(value, minimum, maximum) { return Math.max(minimum, Math.min(maximum, value)); }
-function updateZoomControl() { $("#resetZoomButton").disabled = !capture || (viewStart === 0 && viewSeconds === captureSeconds()); }
+function updateZoomControl() {
+  const ready = !!capture;
+  ["#zoomInButton", "#zoomOutButton", "#panEarlierButton", "#panLaterButton"].forEach(selector => { $(selector).disabled = !ready; });
+  $("#resetZoomButton").disabled = !ready || (viewStart === 0 && viewSeconds === captureSeconds());
+}
 function resetZoom() { viewStart = 0; viewSeconds = captureSeconds(); updateZoomControl(); }
 function setView(start, seconds) {
   const total = captureSeconds();
@@ -49,6 +53,8 @@ function setView(start, seconds) {
   viewStart = clamp(start, 0, total - viewSeconds);
   updateZoomControl(); drawAll();
 }
+function zoomAtCenter(factor) { setView(viewStart + viewSeconds * (1 - factor) / 2, viewSeconds * factor); }
+function panView(direction) { setView(viewStart + direction * viewSeconds * 0.5, viewSeconds); }
 
 function drawAll() {
   if (!capture) return;
@@ -89,24 +95,7 @@ function drawPlot(canvas, series, domain, colors, unit, events) {
   series.forEach((values, index) => { ctx.strokeStyle = colors[index]; ctx.lineWidth = 1.15; ctx.beginPath(); const stride = Math.max(1, Math.ceil((endIndex - startIndex + 1) / plotWidth)); for (let i = startIndex; i <= endIndex; i += stride) { const x = xAt(i), y = top + plotHeight * (domain[1] - values[i]) / (domain[1] - domain[0]); if (i === startIndex) ctx.moveTo(x, y); else ctx.lineTo(x, y); } ctx.stroke(); });
 }
 
-function pointerRatio(canvas, event) {
-  const rect = canvas.getBoundingClientRect(), x = (event.clientX - rect.left) * canvas.width / rect.width;
-  return clamp((x - 58) / (canvas.width - 58 - 18), 0, 1);
-}
-
 function addViewportControls(canvas) {
-  canvas.addEventListener("wheel", event => {
-    if (!capture) return;
-    event.preventDefault();
-    if (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
-      const delta = (event.deltaX || event.deltaY) * viewSeconds / 500;
-      setView(viewStart + delta, viewSeconds);
-      return;
-    }
-    const ratio = pointerRatio(canvas, event), anchor = viewStart + ratio * viewSeconds;
-    const nextSeconds = viewSeconds * (event.deltaY < 0 ? 0.8 : 1.25);
-    setView(anchor - ratio * nextSeconds, nextSeconds);
-  }, { passive: false });
   canvas.addEventListener("pointerdown", event => {
     if (!capture || event.button !== 0) return;
     drag = { canvas, x: event.clientX, start: viewStart };
@@ -159,6 +148,10 @@ $("#downloadButton").addEventListener("click", () => downloadCapture().catch(err
 $("#fileInput").addEventListener("change", async event => { try { setError(""); displayCapture(new Uint8Array(await event.target.files[0].arrayBuffer())); setStatus("Capture file opened."); } catch (error) { setError(error.message); } event.target.value = ""; });
 $("#sampleSelect").addEventListener("change", async event => { const filename = event.target.value; if (!filename) return; try { setError(""); setStatus("Loading sample capture…"); const response = await fetch("sample-data/" + filename); if (!response.ok) throw new Error("Could not load sample capture (" + response.status + ")."); displayCapture(new Uint8Array(await response.arrayBuffer())); setStatus("Sample capture opened."); } catch (error) { setError(error.message); setStatus("Sample did not load."); } event.target.value = ""; });
 $("#showLabels").addEventListener("change", event => { showLabels = event.target.checked; drawAll(); });
+$("#zoomInButton").addEventListener("click", () => zoomAtCenter(0.6));
+$("#zoomOutButton").addEventListener("click", () => zoomAtCenter(1 / 0.6));
+$("#panEarlierButton").addEventListener("click", () => panView(-1));
+$("#panLaterButton").addEventListener("click", () => panView(1));
 $("#resetZoomButton").addEventListener("click", () => { resetZoom(); drawAll(); });
 $("#saveButton").addEventListener("click", () => { const blob = new Blob([captureBytes], { type: "application/octet-stream" }), link = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: "eggbert-capture.egg" }); link.click(); URL.revokeObjectURL(link.href); });
 [$("#accelerationChart"), $("#magnitudeChart")].forEach(addViewportControls);
