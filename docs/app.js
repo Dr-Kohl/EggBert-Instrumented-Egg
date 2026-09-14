@@ -173,7 +173,7 @@ async function disconnect() {
 async function downloadCapture() {
   if (!port) return; setError(""); setStatus("Requesting capture…"); $("#downloadButton").disabled = true;
   const writer = port.writable.getWriter(); await writer.write(new TextEncoder().encode("download\n")); writer.releaseLock();
-  const reader = port.readable.getReader(); activeReader = reader; let received = new Uint8Array(), required = null, start = -1;
+  const reader = port.readable.getReader(); activeReader = reader; let received = new Uint8Array(), required = null, start = -1, verified = false;
   try {
     while (required === null || received.length - start < required) {
       const result = await Promise.race([reader.read(), new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 10000))]);
@@ -183,8 +183,19 @@ async function downloadCapture() {
       if (start < 0) { const text = new TextDecoder().decode(received); if (text.includes("ERROR:")) throw new Error(text.trim()); }
       if (start >= 0 && received.length >= start + HEADER_BYTES) { const view = new DataView(received.buffer, received.byteOffset + start, HEADER_BYTES); required = view.getUint16(6, true) + view.getUint32(12, true) * view.getUint16(26, true); setStatus(`Downloading ${required.toLocaleString()} bytes…`); }
     }
-    displayCapture(received.slice(start, start + required)); setStatus("Capture downloaded and verified.");
+    displayCapture(received.slice(start, start + required));
+    if (!capture.validCrc) throw new Error("Capture CRC verification failed. EggBert remains connected so you can retry the download.");
+    verified = true;
   } finally { if (activeReader === reader) activeReader = undefined; reader.releaseLock(); $("#downloadButton").disabled = false; }
+  if (verified) {
+    try {
+      await disconnect();
+      setStatus("Capture received and verified. USB disconnected; save the .egg file, then erase EggBert when ready.");
+    } catch (error) {
+      setError("Capture received and verified, but USB did not release automatically. Use Disconnect before reconnecting EggBert.");
+      setStatus("Capture received and verified.");
+    }
+  }
 }
 
 $("#connectButton").addEventListener("click", () => connect().catch(error => { setError(error.message); setStatus("No device connected."); }));
