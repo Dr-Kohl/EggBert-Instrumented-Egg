@@ -30,6 +30,7 @@ static const uint BUTTONS[] = {BUTTON_1_PIN, BUTTON_2_PIN, BUTTON_3_PIN};
 #define GENTLE_FREEFALL_SAMPLES   (CAPTURE_RATE_HZ / 10u)
 #define GENTLE_FIRM_MIN_COUNTS    (ACCEL_COUNTS_PER_G * 5u)
 #define GENTLE_HARD_MIN_COUNTS    (ACCEL_COUNTS_PER_G * 10u)
+#define GENTLE_RESULT_LED_MS      5000u
 #define SATURATION_NEAR_COUNTS    (ACCEL_COUNTS_PER_G * 159u / 10u)
 
 #define EGG_FILE_VERSION        1u
@@ -96,6 +97,8 @@ static uint32_t gentle_peak_axis_counts;
 static uint32_t gentle_rearm_still_samples;
 static uint32_t gentle_freefall_samples;
 static bool gentle_saturated;
+static bool gentle_result_available;
+static absolute_time_t gentle_result_led_until;
 
 typedef enum {
     GENTLE_SCORE_GENTLE,
@@ -297,7 +300,10 @@ static void show_ui(void) {
     case UI_RECORD: show_record_menu(); break;
     case UI_DROP_TEST: show_drop_test_menu(); break;
     case UI_CHALLENGES: show_challenges_menu(); break;
-    case UI_GENTLE_CATCH: show_gentle_ready(); break;
+    case UI_GENTLE_CATCH:
+        if (gentle_result_available) show_gentle_result();
+        else show_gentle_ready();
+        break;
     case UI_CAPTURE_COMPLETE: show_capture_complete(); break;
     case UI_CAPTURE_OPTIONS: show_capture_options(); break;
     case UI_ERASE_CONFIRM: show_erase_confirm(); break;
@@ -489,6 +495,7 @@ static void start_gentle_catch(void) {
     gentle_rearm_still_samples = 0;
     gentle_freefall_samples = 0;
     gentle_saturated = false;
+    gentle_result_available = false;
     if (!lsm6dsv_fifo_start()) {
         printf("ERROR: could not start IMU FIFO for Gentle Catch.\n");
         return;
@@ -507,6 +514,8 @@ static void finish_gentle_catch(void) {
     // until the next real freefall begins a new catch attempt.
     capture_state = CAPTURE_GENTLE_RESULT;
     gentle_rearm_still_samples = 0;
+    gentle_result_available = true;
+    gentle_result_led_until = make_timeout_time_ms(GENTLE_RESULT_LED_MS);
     show_gentle_result();
     if (gentle_saturated)
         printf("Gentle Catch result: sensor exceeded its 16 g axis range.\n");
@@ -533,12 +542,28 @@ static void update_status_leds(bool imu_ok) {
     case CAPTURE_WAIT_EVENT: leds(0x01u); break;
     case CAPTURE_POST_EVENT: leds(0x03u); break;
     case CAPTURE_COMPLETE: leds(0x04u); break;
-    case CAPTURE_GENTLE_WAIT_FALL: leds(0x01u); break;
+    case CAPTURE_GENTLE_WAIT_FALL: {
+        unsigned mask = 0x01u; // Green always means rearmed and ready to throw.
+        bool show_result_led = gentle_result_available &&
+            absolute_time_diff_us(get_absolute_time(), gentle_result_led_until) > 0;
+        bool blink_on = (to_ms_since_boot(get_absolute_time()) / 300u) % 2u == 0u;
+        if (show_result_led) {
+            if (gentle_saturated || gentle_peak_axis_counts >= GENTLE_HARD_MIN_COUNTS)
+                mask |= blink_on ? 0x04u : 0u;
+            else if (gentle_peak_axis_counts >= GENTLE_FIRM_MIN_COUNTS)
+                mask |= blink_on ? 0x02u : 0u;
+            else mask |= 0x02u;
+        }
+        leds(mask);
+        break;
+    }
     case CAPTURE_GENTLE_WAIT_CATCH: leds(0); break;
     case CAPTURE_GENTLE_MEASURE: leds(0); break;
     case CAPTURE_GENTLE_RESULT: {
+        bool show_result_led = absolute_time_diff_us(get_absolute_time(), gentle_result_led_until) > 0;
         bool blink_on = (to_ms_since_boot(get_absolute_time()) / 300u) % 2u == 0u;
-        if (gentle_saturated || gentle_peak_axis_counts >= GENTLE_HARD_MIN_COUNTS)
+        if (!show_result_led) leds(0);
+        else if (gentle_saturated || gentle_peak_axis_counts >= GENTLE_HARD_MIN_COUNTS)
             leds(blink_on ? 0x04u : 0u);
         else if (gentle_peak_axis_counts >= GENTLE_FIRM_MIN_COUNTS)
             leds(blink_on ? 0x02u : 0u);
@@ -597,6 +622,7 @@ static void process_gentle_sample(const lsm6dsv_accel_sample_t *sample) {
         if (magnitude < (uint64_t)FREEFALL_MAX_COUNTS * FREEFALL_MAX_COUNTS) {
             if (++gentle_freefall_samples >= GENTLE_FREEFALL_SAMPLES) {
                 capture_state = CAPTURE_GENTLE_WAIT_CATCH;
+                gentle_result_available = false;
                 show_gentle_fall();
                 printf("Gentle Catch: 100 ms freefall confirmed; waiting for catch.\n");
             }
@@ -609,8 +635,9 @@ static void process_gentle_sample(const lsm6dsv_accel_sample_t *sample) {
             if (++gentle_rearm_still_samples >= GENTLE_REARM_STILL_SAMPLES) {
                 capture_state = CAPTURE_GENTLE_WAIT_FALL;
                 gentle_freefall_samples = 0;
-                show_gentle_ready();
-                printf("Gentle Catch rearmed: held still for 0.5 seconds; ready to throw.\n");
+                // Leave the previous score onscreen. Green now means it is
+                // armed for the next throw; a confirmed freefall clears it.
+                printf("Gentle Catch rearmed: held still for 0.5 seconds; green means ready to throw.\n");
             }
         } else gentle_rearm_still_samples = 0;
         return;
