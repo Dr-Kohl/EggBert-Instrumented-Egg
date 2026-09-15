@@ -61,6 +61,11 @@ RAM: connect the USB webpage to download it, or use `SELECT = OPTIONS` and the
 two-step `ERASE CAPTURE` confirmation before rearming. A new capture cannot
 overwrite a completed one accidentally.
 
+`Home -> Raw XYZ` is a live signed-count diagnostic screen. It uses the normal
+120 Hz, +/-2 g live-read mode and refreshes X/Y/Z every 100 ms; the middle
+button returns home. Each capture start also reads back IMU `CTRL8` and refuses
+to proceed unless it reports `0x03`, the expected +/-16 g capture range.
+
 ### Gentle Catch game
 
 `Home -> Catch -> Gentle` starts a feedback-only catching challenge. EggBert

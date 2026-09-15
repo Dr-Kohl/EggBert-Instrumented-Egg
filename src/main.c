@@ -66,12 +66,16 @@ static absolute_time_t next_capture_poll;
 static bool oled_ok;
 static uint16_t power_out_millivolts;
 static bool usb_power_present;
+static int16_t live_accel_x;
+static int16_t live_accel_y;
+static int16_t live_accel_z;
 
 typedef enum {
     UI_HOME,
     UI_RECORD,
     UI_DROP_TEST,
     UI_CHALLENGES,
+    UI_RAW_XYZ,
     UI_GENTLE_CATCH,
     UI_CAPTURE_COMPLETE,
     UI_CAPTURE_OPTIONS,
@@ -165,7 +169,25 @@ static void show_home(void) {
     ui_menu_item(25, "RECORD", ui_selection == 0);
     ui_menu_item(38, "CATCH", ui_selection == 1);
     ui_menu_item(51, "RESULTS", ui_selection == 2);
+    ui_menu_item(64, "RAW XYZ", ui_selection == 3);
     ssd1306_ui_text(18, 112, "MID GO", true);
+    ssd1306_show();
+}
+
+static void show_raw_xyz(void) {
+    if (!oled_ok) return;
+    char raw[8];
+    ui_begin("RAW XYZ", "I");
+    ssd1306_ui_text(18, 28, "X", true);
+    snprintf(raw, sizeof raw, "%d", live_accel_x);
+    ssd1306_ui_text(28, 28, raw, true);
+    ssd1306_ui_text(18, 44, "Y", true);
+    snprintf(raw, sizeof raw, "%d", live_accel_y);
+    ssd1306_ui_text(28, 44, raw, true);
+    ssd1306_ui_text(18, 60, "Z", true);
+    snprintf(raw, sizeof raw, "%d", live_accel_z);
+    ssd1306_ui_text(28, 60, raw, true);
+    ssd1306_ui_text(18, 112, "MID EXIT", true);
     ssd1306_show();
 }
 
@@ -306,6 +328,7 @@ static void show_ui(void) {
     case UI_RECORD: show_record_menu(); break;
     case UI_DROP_TEST: show_drop_test_menu(); break;
     case UI_CHALLENGES: show_challenges_menu(); break;
+    case UI_RAW_XYZ: show_raw_xyz(); break;
     case UI_GENTLE_CATCH:
         if (gentle_result_available) show_gentle_result();
         else show_gentle_ready();
@@ -438,6 +461,17 @@ static void download_capture(void) {
     stdio_flush();
 }
 
+static bool verify_capture_range(void) {
+    uint8_t ctrl8 = lsm6dsv_read_ctrl8();
+    if (ctrl8 != 0x03u) {
+        lsm6dsv_fifo_stop();
+        printf("ERROR: IMU CTRL8 readback is 0x%02X; expected 0x03 (+/-16 g).\n", ctrl8);
+        return false;
+    }
+    printf("IMU capture config verified: CTRL8=0x%02X (+/-16 g, 0.488 mg/LSB).\n", ctrl8);
+    return true;
+}
+
 static void start_capture(void) {
     if (capture_complete) {
         printf("Capture is protected. Erase it from the EggBert menu before rearming.\n");
@@ -457,6 +491,7 @@ static void start_capture(void) {
         printf("ERROR: could not start IMU FIFO\n");
         return;
     }
+    if (!verify_capture_range()) return;
     capture_active = true;
     capture_state = CAPTURE_WAIT_STILL;
     next_capture_poll = make_timeout_time_ms(5);
@@ -506,6 +541,7 @@ static void start_gentle_catch(void) {
         printf("ERROR: could not start IMU FIFO for Gentle Catch.\n");
         return;
     }
+    if (!verify_capture_range()) return;
     capture_active = true;
     capture_state = CAPTURE_GENTLE_WAIT_FALL;
     ui_state = UI_GENTLE_CATCH;
@@ -769,13 +805,15 @@ static void handle_button_press(unsigned button) {
     }
 
     if (button == 0) {
-        unsigned count = ui_state == UI_HOME ? 3u : 2u;
+        unsigned count = ui_state == UI_HOME ? 4u :
+                         (ui_state == UI_RAW_XYZ ? 1u : 2u);
         ui_selection = (ui_selection + count - 1u) % count;
         show_ui();
         return;
     }
     if (button == 2) {
-        unsigned count = ui_state == UI_HOME ? 3u : 2u;
+        unsigned count = ui_state == UI_HOME ? 4u :
+                         (ui_state == UI_RAW_XYZ ? 1u : 2u);
         ui_selection = (ui_selection + 1u) % count;
         show_ui();
         return;
@@ -786,8 +824,9 @@ static void handle_button_press(unsigned button) {
     case UI_HOME:
         if (ui_selection == 0) { ui_state = UI_RECORD; ui_selection = 0; }
         else if (ui_selection == 1) { ui_state = UI_CHALLENGES; ui_selection = 0; }
-        else if (capture_complete) { ui_state = UI_CAPTURE_COMPLETE; ui_selection = 0; }
-        else printf("No capture is stored. Choose RECORD to begin a drop test.\n");
+        else if (ui_selection == 2 && capture_complete) { ui_state = UI_CAPTURE_COMPLETE; ui_selection = 0; }
+        else if (ui_selection == 2) printf("No capture is stored. Choose RECORD to begin a drop test.\n");
+        else { ui_state = UI_RAW_XYZ; ui_selection = 0; }
         break;
     case UI_RECORD:
         if (ui_selection == 0) { ui_state = UI_DROP_TEST; ui_selection = 0; }
@@ -800,6 +839,10 @@ static void handle_button_press(unsigned button) {
     case UI_CHALLENGES:
         if (ui_selection == 0) start_gentle_catch();
         else { ui_state = UI_HOME; ui_selection = 0; }
+        break;
+    case UI_RAW_XYZ:
+        ui_state = UI_HOME;
+        ui_selection = 0;
         break;
     case UI_CAPTURE_COMPLETE:
         ui_state = UI_CAPTURE_OPTIONS;
@@ -873,9 +916,13 @@ int main(void) {
         if (imu_ok && !capture_active && absolute_time_diff_us(get_absolute_time(), next_imu_report) <= 0) {
             int16_t x, y, z;
             if (lsm6dsv_read_accel(&x, &y, &z)) {
+                live_accel_x = x;
+                live_accel_y = y;
+                live_accel_z = z;
                 printf("Accel raw: X=%d Y=%d Z=%d (0.061 mg/LSB)\n", x, y, z);
+                if (ui_state == UI_RAW_XYZ) show_raw_xyz();
             }
-            next_imu_report = make_timeout_time_ms(250);
+            next_imu_report = make_timeout_time_ms(ui_state == UI_RAW_XYZ ? 100 : 250);
         }
         sleep_ms(capture_active ? 1 : 10);
     }

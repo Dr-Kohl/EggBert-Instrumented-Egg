@@ -20,6 +20,9 @@ bool lsm6dsv_read_accel(int16_t *x, int16_t *y, int16_t *z);
 // FIFO watermark and overrun are routed to IMU_INT1_PIN.
 bool lsm6dsv_fifo_start(void);
 
+// Reads CTRL8, which contains the current accelerometer full-scale selection.
+uint8_t lsm6dsv_read_ctrl8(void);
+
 // Stops FIFO acquisition and returns the sensor to the 120 Hz live-read setup.
 void lsm6dsv_fifo_stop(void);
 

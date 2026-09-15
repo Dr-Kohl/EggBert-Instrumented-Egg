@@ -119,6 +119,8 @@ bool lsm6dsv_fifo_start(void) {
     return true;
 }
 
+uint8_t lsm6dsv_read_ctrl8(void) { return read_reg(LSM6DSV_CTRL8); }
+
 void lsm6dsv_fifo_stop(void) {
     gpio_set_irq_enabled(IMU_INT1_PIN, GPIO_IRQ_EDGE_RISE, false);
     write_reg(LSM6DSV_INT1_CTRL, 0x00u);
