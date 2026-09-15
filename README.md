@@ -64,12 +64,16 @@ overwrite a completed one accidentally.
 ### Gentle Catch game
 
 `Home -> Catch -> Gentle` starts a feedback-only catching challenge. EggBert
-waits for freefall, detects the following catch, measures the next 0.5 seconds,
-and displays the peak **axis** acceleration. `CLIPPED / OVER 16G` means an axis
-reached the sensor's measurement limit, so the true impact was at least that
-large. The result stays on screen until EggBert next experiences freefall; that
-freefall begins the next catch attempt. Press the middle button at any time to
-leave the game.
+waits for 100 ms of confirmed freefall, detects the following catch, measures
+its first 0.15 seconds, and displays the peak **axis** acceleration in a
+double-size font. `CLIPPED / 16G+` means an axis reached the sensor's
+measurement limit, so the true impact was at least that large. The result stays
+on screen until EggBert is held still near 1 g for 0.5 seconds; it then turns
+green to show that it is ready for the next throw. Press the middle button at
+any time to leave the game.
+
+The LED score is solid yellow below 5 g (gentle), blinking yellow from 5 to
+under 10 g (firm), and blinking red at 10 g or above or for any clipped catch.
 
 The game never writes the RAM capture buffer, so it cannot overwrite a saved
 `.egg` capture that is awaiting download or deliberate erasure.

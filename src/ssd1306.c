@@ -53,7 +53,8 @@ static const uint8_t glyphs[][5] = {
     {0x1f,0x20,0x40,0x20,0x1f}, {0x3f,0x40,0x38,0x40,0x3f}, {0x63,0x14,0x08,0x14,0x63},
     {0x07,0x08,0x70,0x08,0x07}, {0x61,0x51,0x49,0x45,0x43},
     {0x08,0x08,0x08,0x08,0x08},
-    {0,0x60,0x60,0,0}
+    {0,0x60,0x60,0,0},
+    {0x08,0x08,0x3e,0x08,0x08}
 };
 
 static int glyph_index(char c) {
@@ -61,6 +62,7 @@ static int glyph_index(char c) {
     if (c >= 'A' && c <= 'Z') return 11 + c - 'A';
     if (c == '-') return 37;
     if (c == '.') return 38;
+    if (c == '+') return 39;
     return 0;
 }
 
@@ -93,6 +95,21 @@ void ssd1306_ui_text(uint8_t x, uint8_t y, const char *text, bool on) {
             for (uint8_t row = 0; row < 7u; ++row)
                 if (glyph[col] & (1u << row)) ssd1306_ui_pixel((uint8_t)(x + col), (uint8_t)(y + row), on);
         x = (uint8_t)(x + 6u);
+    }
+}
+
+void ssd1306_ui_text_scaled(uint8_t x, uint8_t y, const char *text, bool on, uint8_t scale) {
+    if (scale == 0) return;
+    while (*text && x + 5u * scale <= UI_WIDTH) {
+        const uint8_t *glyph = glyphs[glyph_index(*text++)];
+        for (uint8_t col = 0; col < 5u; ++col)
+            for (uint8_t row = 0; row < 7u; ++row)
+                if (glyph[col] & (1u << row))
+                    for (uint8_t dx = 0; dx < scale; ++dx)
+                        for (uint8_t dy = 0; dy < scale; ++dy)
+                            ssd1306_ui_pixel((uint8_t)(x + col * scale + dx),
+                                             (uint8_t)(y + row * scale + dy), on);
+        x = (uint8_t)(x + 6u * scale);
     }
 }
 

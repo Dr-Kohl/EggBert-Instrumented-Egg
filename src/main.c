@@ -25,7 +25,11 @@ static const uint BUTTONS[] = {BUTTON_1_PIN, BUTTON_2_PIN, BUTTON_3_PIN};
 #define FREEFALL_MAX_COUNTS    (ACCEL_COUNTS_PER_G * 45u / 100u)
 #define STILL_REQUIRED_SAMPLES CAPTURE_RATE_HZ
 #define GENTLE_CATCH_START_COUNTS (ACCEL_COUNTS_PER_G * 8u / 10u)
-#define GENTLE_CATCH_SAMPLES      (CAPTURE_RATE_HZ / 2u)
+#define GENTLE_CATCH_SAMPLES      (CAPTURE_RATE_HZ * 15u / 100u)
+#define GENTLE_REARM_STILL_SAMPLES (CAPTURE_RATE_HZ / 2u)
+#define GENTLE_FREEFALL_SAMPLES   (CAPTURE_RATE_HZ / 10u)
+#define GENTLE_FIRM_MIN_COUNTS    (ACCEL_COUNTS_PER_G * 5u)
+#define GENTLE_HARD_MIN_COUNTS    (ACCEL_COUNTS_PER_G * 10u)
 #define SATURATION_NEAR_COUNTS    (ACCEL_COUNTS_PER_G * 159u / 10u)
 
 #define EGG_FILE_VERSION        1u
@@ -89,7 +93,15 @@ typedef enum {
 static capture_state_t capture_state = CAPTURE_IDLE;
 static uint32_t gentle_measure_samples;
 static uint32_t gentle_peak_axis_counts;
+static uint32_t gentle_rearm_still_samples;
+static uint32_t gentle_freefall_samples;
 static bool gentle_saturated;
+
+typedef enum {
+    GENTLE_SCORE_GENTLE,
+    GENTLE_SCORE_FIRM,
+    GENTLE_SCORE_HARD,
+} gentle_score_t;
 
 static void setup_gpio(void) {
     for (unsigned i = 0; i < 3; ++i) {
@@ -205,16 +217,22 @@ static void show_gentle_measure(void) {
 static void show_gentle_result(void) {
     if (!oled_ok) return;
     char peak[8];
-    ui_begin(gentle_saturated ? "CLIPPED" : "CATCH", "G");
+    gentle_score_t score = gentle_saturated ? GENTLE_SCORE_HARD :
+                           gentle_peak_axis_counts >= GENTLE_HARD_MIN_COUNTS ? GENTLE_SCORE_HARD :
+                           gentle_peak_axis_counts >= GENTLE_FIRM_MIN_COUNTS ? GENTLE_SCORE_FIRM :
+                           GENTLE_SCORE_GENTLE;
+    ui_begin(gentle_saturated ? "CLIPPED" :
+             score == GENTLE_SCORE_GENTLE ? "GENTLE" :
+             score == GENTLE_SCORE_FIRM ? "FIRM" : "HARD", "G");
     if (gentle_saturated) {
-        ssd1306_ui_text(18, 36, "OVER", true);
-        ssd1306_ui_text(18, 48, "16G", true);
+        ssd1306_ui_text(18, 36, "PEAK", true);
+        ssd1306_ui_text_scaled(7, 48, "16G+", true, 2);
     } else {
         snprintf(peak, sizeof peak, "%lu.%luG",
                  (unsigned long)(gentle_peak_axis_counts / ACCEL_COUNTS_PER_G),
                  (unsigned long)((gentle_peak_axis_counts % ACCEL_COUNTS_PER_G) * 10u / ACCEL_COUNTS_PER_G));
-        ssd1306_ui_text(18, 36, "MAX AX", true);
-        ssd1306_ui_text(18, 48, peak, true);
+        ssd1306_ui_text(18, 36, "PEAK", true);
+        ssd1306_ui_text_scaled(2, 48, peak, true, 2);
     }
     ssd1306_ui_text(18, 112, "MID EXIT", true);
     ssd1306_show();
@@ -468,6 +486,8 @@ static void erase_capture(void) {
 static void start_gentle_catch(void) {
     gentle_measure_samples = 0;
     gentle_peak_axis_counts = 0;
+    gentle_rearm_still_samples = 0;
+    gentle_freefall_samples = 0;
     gentle_saturated = false;
     if (!lsm6dsv_fifo_start()) {
         printf("ERROR: could not start IMU FIFO for Gentle Catch.\n");
@@ -486,6 +506,7 @@ static void finish_gentle_catch(void) {
     // Keep sampling after the result is shown. The result remains visible
     // until the next real freefall begins a new catch attempt.
     capture_state = CAPTURE_GENTLE_RESULT;
+    gentle_rearm_still_samples = 0;
     show_gentle_result();
     if (gentle_saturated)
         printf("Gentle Catch result: sensor exceeded its 16 g axis range.\n");
@@ -513,9 +534,17 @@ static void update_status_leds(bool imu_ok) {
     case CAPTURE_POST_EVENT: leds(0x03u); break;
     case CAPTURE_COMPLETE: leds(0x04u); break;
     case CAPTURE_GENTLE_WAIT_FALL: leds(0x01u); break;
-    case CAPTURE_GENTLE_WAIT_CATCH: leds(0x02u); break;
-    case CAPTURE_GENTLE_MEASURE: leds(0x03u); break;
-    case CAPTURE_GENTLE_RESULT: leds(0x04u); break;
+    case CAPTURE_GENTLE_WAIT_CATCH: leds(0); break;
+    case CAPTURE_GENTLE_MEASURE: leds(0); break;
+    case CAPTURE_GENTLE_RESULT: {
+        bool blink_on = (to_ms_since_boot(get_absolute_time()) / 300u) % 2u == 0u;
+        if (gentle_saturated || gentle_peak_axis_counts >= GENTLE_HARD_MIN_COUNTS)
+            leds(blink_on ? 0x04u : 0u);
+        else if (gentle_peak_axis_counts >= GENTLE_FIRM_MIN_COUNTS)
+            leds(blink_on ? 0x02u : 0u);
+        else leds(0x02u);
+        break;
+    }
     default: leds(0); break;
     }
 }
@@ -566,22 +595,24 @@ static void process_gentle_sample(const lsm6dsv_accel_sample_t *sample) {
 
     if (capture_state == CAPTURE_GENTLE_WAIT_FALL) {
         if (magnitude < (uint64_t)FREEFALL_MAX_COUNTS * FREEFALL_MAX_COUNTS) {
-            capture_state = CAPTURE_GENTLE_WAIT_CATCH;
-            show_gentle_fall();
-            printf("Gentle Catch: freefall detected; waiting for catch.\n");
-        }
+            if (++gentle_freefall_samples >= GENTLE_FREEFALL_SAMPLES) {
+                capture_state = CAPTURE_GENTLE_WAIT_CATCH;
+                show_gentle_fall();
+                printf("Gentle Catch: 100 ms freefall confirmed; waiting for catch.\n");
+            }
+        } else gentle_freefall_samples = 0;
         return;
     }
 
     if (capture_state == CAPTURE_GENTLE_RESULT) {
-        if (magnitude < (uint64_t)FREEFALL_MAX_COUNTS * FREEFALL_MAX_COUNTS) {
-            capture_state = CAPTURE_GENTLE_WAIT_CATCH;
-            gentle_measure_samples = 0;
-            gentle_peak_axis_counts = 0;
-            gentle_saturated = false;
-            show_gentle_fall();
-            printf("Gentle Catch: next freefall detected; ready to measure its catch.\n");
-        }
+        if (magnitude_between(magnitude, STILL_MIN_COUNTS, STILL_MAX_COUNTS)) {
+            if (++gentle_rearm_still_samples >= GENTLE_REARM_STILL_SAMPLES) {
+                capture_state = CAPTURE_GENTLE_WAIT_FALL;
+                gentle_freefall_samples = 0;
+                show_gentle_ready();
+                printf("Gentle Catch rearmed: held still for 0.5 seconds; ready to throw.\n");
+            }
+        } else gentle_rearm_still_samples = 0;
         return;
     }
 

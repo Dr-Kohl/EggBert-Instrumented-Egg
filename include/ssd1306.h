@@ -11,4 +11,5 @@ void ssd1306_text(uint8_t row, const char *text);
 void ssd1306_ui_pixel(uint8_t x, uint8_t y, bool on);
 void ssd1306_ui_fill_rect(uint8_t x, uint8_t y, uint8_t width, uint8_t height, bool on);
 void ssd1306_ui_text(uint8_t x, uint8_t y, const char *text, bool on);
+void ssd1306_ui_text_scaled(uint8_t x, uint8_t y, const char *text, bool on, uint8_t scale);
 void ssd1306_show(void);
