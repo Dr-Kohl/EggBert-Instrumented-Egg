@@ -9,7 +9,9 @@
 #include "ssd1306.h"
 
 static const uint LEDS[] = {LED_GREEN_PIN, LED_YELLOW_PIN, LED_RED_PIN};
-static const uint BUTTONS[] = {BUTTON_1_PIN, BUTTON_2_PIN, BUTTON_3_PIN};
+// Physical top, middle, and bottom buttons.  The schematic switch numbering
+// runs bottom-to-top, so it is deliberately not the navigation order.
+static const uint BUTTONS[] = {BUTTON_3_PIN, BUTTON_2_PIN, BUTTON_1_PIN};
 
 #define CAPTURE_RATE_HZ       3840u
 #define CAPTURE_SECONDS         5u
@@ -229,13 +231,17 @@ static void show_gentle_result(void) {
              score == GENTLE_SCORE_FIRM ? "FIRM" : "HARD", "G");
     if (gentle_saturated) {
         ssd1306_ui_text(18, 36, "PEAK", true);
-        ssd1306_ui_text_scaled(7, 48, "16G+", true, 2);
+        ssd1306_ui_text_scaled(24, 48, "16", true, 2);
+        ssd1306_ui_text_scaled(20, 70, "G+", true, 2);
     } else {
-        snprintf(peak, sizeof peak, "%lu.%luG",
+        snprintf(peak, sizeof peak, "%lu.%lu",
                  (unsigned long)(gentle_peak_axis_counts / ACCEL_COUNTS_PER_G),
                  (unsigned long)((gentle_peak_axis_counts % ACCEL_COUNTS_PER_G) * 10u / ACCEL_COUNTS_PER_G));
         ssd1306_ui_text(18, 36, "PEAK", true);
-        ssd1306_ui_text_scaled(2, 48, peak, true, 2);
+        // Four two-times glyphs fit from x=17 through x=62, entirely to the
+        // right of the yellow status rail.  The unit gets its own large line.
+        ssd1306_ui_text_scaled(17, 48, peak, true, 2);
+        ssd1306_ui_text_scaled(26, 70, "G", true, 2);
     }
     ssd1306_ui_text(18, 112, "MID EXIT", true);
     ssd1306_show();
@@ -852,7 +858,7 @@ int main(void) {
         for (unsigned i = 0; i < 3; ++i)
             if (!gpio_get(BUTTONS[i])) pressed |= 1u << i;
         if (pressed != last_raw_pressed) {
-            printf("Buttons: SW5=%u SW2=%u SW3=%u\n", pressed & 1u, (pressed >> 1) & 1u, (pressed >> 2) & 1u);
+            printf("Buttons: UP=%u MID=%u DOWN=%u\n", pressed & 1u, (pressed >> 1) & 1u, (pressed >> 2) & 1u);
             last_raw_pressed = pressed;
             buttons_changed_at = get_absolute_time();
         }
