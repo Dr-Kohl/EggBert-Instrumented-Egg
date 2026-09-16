@@ -66,9 +66,10 @@ function captureSeconds() { return capture ? capture.sampleCount / capture.sampl
 function clamp(value, minimum, maximum) { return Math.max(minimum, Math.min(maximum, value)); }
 function updateZoomControl() {
   const ready = !!capture;
-  ["#axesButton", "#magnitudeButton", "#zoomInButton", "#zoomOutButton", "#panEarlierButton", "#panLaterButton", "#focusEventButton"].forEach(selector => { $(selector).disabled = !ready; });
+  ["#axesButton", "#magnitudeButton", "#showLabels", "#zoomInButton", "#zoomOutButton", "#panEarlierButton", "#panLaterButton", "#focusEventButton"].forEach(selector => { $(selector).disabled = !ready; });
   $("#axesButton").setAttribute("aria-pressed", String(chartMode === "axes"));
   $("#magnitudeButton").setAttribute("aria-pressed", String(chartMode === "magnitude"));
+  $("#showLabels").setAttribute("aria-pressed", String(showLabels));
   $("#resetZoomButton").disabled = !ready || (viewStart === 0 && viewSeconds === captureSeconds());
 }
 function resetZoom() { viewStart = 0; viewSeconds = captureSeconds(); updateZoomControl(); }
@@ -187,14 +188,14 @@ function addViewportControls(canvas) {
 async function connect() {
   if (!("serial" in navigator)) throw new Error("Web Serial is unavailable. Use Chrome or Edge over HTTPS, or open a saved .egg file.");
   port = await navigator.serial.requestPort(); await port.open({ baudRate: 115200, bufferSize: 65536 });
-  $("#connectButton").textContent = "EggBert connected"; $("#connectButton").disabled = true; $("#disconnectButton").disabled = false; $("#downloadButton").disabled = false; setStatus("EggBert connected. Complete the test using EggBert's buttons, then download it here.");
+  $("#connectButton").textContent = "EggBert connected"; $("#connectButton").disabled = true; $("#downloadButton").disabled = false; setStatus("EggBert connected. Complete the test using EggBert's buttons, then download it here.");
 }
 
 async function disconnect() {
   if (activeReader) await activeReader.cancel();
   if (port) await port.close();
   port = undefined; activeReader = undefined;
-  $("#connectButton").textContent = "Connect EggBert"; $("#connectButton").disabled = false; $("#disconnectButton").disabled = true; $("#downloadButton").disabled = true;
+  $("#connectButton").textContent = "Connect EggBert"; $("#connectButton").disabled = false; $("#downloadButton").disabled = true;
   setStatus("Device disconnected.");
 }
 
@@ -220,18 +221,17 @@ async function downloadCapture() {
       await disconnect();
       setStatus("Capture received and verified. USB disconnected; save the .egg file, then erase EggBert when ready.");
     } catch (error) {
-      setError("Capture received and verified, but USB did not release automatically. Use Disconnect before reconnecting EggBert.");
+      setError("Capture received and verified, but USB did not release automatically. Unplug and reconnect EggBert before another transfer.");
       setStatus("Capture received and verified.");
     }
   }
 }
 
 $("#connectButton").addEventListener("click", () => connect().catch(error => { setError(error.message); setStatus("No device connected."); }));
-$("#disconnectButton").addEventListener("click", () => disconnect().catch(error => setError(error.message)));
 $("#downloadButton").addEventListener("click", () => downloadCapture().catch(error => { setError(error.message); setStatus("Download did not complete."); }));
 $("#fileInput").addEventListener("change", async event => { try { setError(""); displayCapture(new Uint8Array(await event.target.files[0].arrayBuffer())); setStatus("Capture file opened."); } catch (error) { setError(error.message); } event.target.value = ""; });
 $("#sampleSelect").addEventListener("change", async event => { const filename = event.target.value; if (!filename) return; try { setError(""); setStatus("Loading sample capture…"); const response = await fetch("sample-data/" + filename); if (!response.ok) throw new Error("Could not load sample capture (" + response.status + ")."); displayCapture(new Uint8Array(await response.arrayBuffer())); setStatus("Sample capture opened."); } catch (error) { setError(error.message); setStatus("Sample did not load."); } event.target.value = ""; });
-$("#showLabels").addEventListener("change", event => { showLabels = event.target.checked; drawAll(); });
+$("#showLabels").addEventListener("click", event => { showLabels = !showLabels; event.currentTarget.setAttribute("aria-pressed", String(showLabels)); drawAll(); });
 $("#axesButton").addEventListener("click", () => setChartMode("axes"));
 $("#magnitudeButton").addEventListener("click", () => setChartMode("magnitude"));
 $("#zoomInButton").addEventListener("click", () => zoomAtCenter(0.6));
