@@ -1,1 +1,0 @@
-Impact exceeds the +/-16 g range; the displayed peak is clipped and is not the true peak.
