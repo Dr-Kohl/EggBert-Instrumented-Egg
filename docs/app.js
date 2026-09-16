@@ -219,7 +219,29 @@ function downloadFile(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
-function exportCsv() {
+function suggestedFilename(extension) {
+  const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").replace(/\.\d{3}Z$/, "");
+  return `eggbert-capture-${timestamp}.${extension}`;
+}
+
+async function saveCaptureFile(blob, extension, description, mimeType) {
+  const filename = suggestedFilename(extension);
+  if (!("showSaveFilePicker" in window)) {
+    downloadFile(blob, filename);
+    setStatus("Your browser does not provide a Save As dialog; the download used the suggested filename.");
+    return;
+  }
+  const handle = await window.showSaveFilePicker({
+    suggestedName: filename,
+    types: [{ description, accept: { [mimeType]: [`.${extension}`] } }],
+  });
+  const writable = await handle.createWritable();
+  await writable.write(blob);
+  await writable.close();
+  setStatus(`Saved ${handle.name}.`);
+}
+
+async function exportCsv() {
   if (!capture) return;
   const rows = ["Time (s),X (g),Y (g),Z (g),Magnitude (g)"];
   for (let index = 0; index < capture.sampleCount; index += 1) {
@@ -231,10 +253,10 @@ function exportCsv() {
       capture.magnitude[index].toFixed(6),
     ].join(","));
   }
-  downloadFile(new Blob([rows.join("\r\n") + "\r\n"], { type: "text/csv;charset=utf-8" }), "eggbert-capture.csv");
+  await saveCaptureFile(new Blob([rows.join("\r\n") + "\r\n"], { type: "text/csv;charset=utf-8" }), "csv", "CSV files", "text/csv");
 }
 
-$("#saveButton").addEventListener("click", () => downloadFile(new Blob([captureBytes], { type: "application/octet-stream" }), "eggbert-capture.egg"));
-$("#saveCsvButton").addEventListener("click", exportCsv);
+$("#saveButton").addEventListener("click", () => saveCaptureFile(new Blob([captureBytes], { type: "application/octet-stream" }), "egg", "EggBert capture files", "application/octet-stream").catch(error => { if (error.name !== "AbortError") setError(`Save failed: ${error.message}`); }));
+$("#saveCsvButton").addEventListener("click", () => exportCsv().catch(error => { if (error.name !== "AbortError") setError(`CSV export failed: ${error.message}`); }));
 addViewportControls($("#captureChart"));
 window.addEventListener("resize", drawAll);
