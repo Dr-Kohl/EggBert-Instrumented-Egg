@@ -28,13 +28,17 @@ function parseEgg(bytes) {
 
 function detectFlight() {
   if (!capture) return undefined;
-  const observedFreefall = capture.magnitude.findIndex(value => value < 0.45);
-  const headerFreefall = (capture.flags & FLAG_FREEFALL) && capture.triggerOffset < capture.sampleCount && capture.magnitude[capture.triggerOffset] < 0.45;
-  const startIndex = headerFreefall ? capture.triggerOffset : observedFreefall;
-  if (startIndex < 0) return undefined;
-  const earliestImpact = startIndex + Math.max(1, Math.round(capture.sampleRate * 0.04));
-  for (let index = earliestImpact; index < capture.sampleCount; index += 1)
-    if (capture.magnitude[index] > 2) return { startIndex, impactIndex: index };
+  const freefallThreshold = 0.4, impactThreshold = 4;
+  const minimumFreefallSamples = Math.max(1, Math.round(capture.sampleRate * 0.08));
+  const minimumFlightSamples = Math.max(1, Math.round(capture.sampleRate * 0.3));
+  for (let startIndex = 0; startIndex <= capture.sampleCount - minimumFreefallSamples; startIndex += 1) {
+    let sustainedFreefall = true;
+    for (let index = startIndex; index < startIndex + minimumFreefallSamples; index += 1)
+      if (capture.magnitude[index] >= freefallThreshold) { sustainedFreefall = false; break; }
+    if (!sustainedFreefall) continue;
+    for (let impactIndex = startIndex + minimumFlightSamples; impactIndex < capture.sampleCount; impactIndex += 1)
+      if (capture.magnitude[impactIndex] > impactThreshold) return { startIndex, impactIndex };
+  }
   return undefined;
 }
 
