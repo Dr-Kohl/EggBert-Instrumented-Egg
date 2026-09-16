@@ -37,7 +37,7 @@ function displayCapture(bytes) {
   $("#triggerType").textContent = trigger + ((capture.flags & FLAG_FIFO_OVERRUN) ? " · FIFO overrun" : "");
   $("#integrity").textContent = capture.validCrc ? "CRC verified" : "CRC FAILED";
   $("#integrity").style.color = capture.validCrc ? "" : "#b00020";
-  $("#saveButton").disabled = false; drawAll();
+  $("#saveButton").disabled = false; $("#saveCsvButton").disabled = false; drawAll();
 }
 
 function captureSeconds() { return capture ? capture.sampleCount / capture.sampleRate : 0; }
@@ -212,6 +212,29 @@ $("#panEarlierButton").addEventListener("click", () => panView(-1));
 $("#panLaterButton").addEventListener("click", () => panView(1));
 $("#focusEventButton").addEventListener("click", focusEvent);
 $("#resetZoomButton").addEventListener("click", () => { resetZoom(); drawAll(); });
-$("#saveButton").addEventListener("click", () => { const blob = new Blob([captureBytes], { type: "application/octet-stream" }), link = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: "eggbert-capture.egg" }); link.click(); URL.revokeObjectURL(link.href); });
+function downloadFile(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = Object.assign(document.createElement("a"), { href: url, download: filename });
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportCsv() {
+  if (!capture) return;
+  const rows = ["Time (s),X (g),Y (g),Z (g),Magnitude (g)"];
+  for (let index = 0; index < capture.sampleCount; index += 1) {
+    rows.push([
+      (index / capture.sampleRate).toFixed(6),
+      capture.x[index].toFixed(6),
+      capture.y[index].toFixed(6),
+      capture.z[index].toFixed(6),
+      capture.magnitude[index].toFixed(6),
+    ].join(","));
+  }
+  downloadFile(new Blob([rows.join("\r\n") + "\r\n"], { type: "text/csv;charset=utf-8" }), "eggbert-capture.csv");
+}
+
+$("#saveButton").addEventListener("click", () => downloadFile(new Blob([captureBytes], { type: "application/octet-stream" }), "eggbert-capture.egg"));
+$("#saveCsvButton").addEventListener("click", exportCsv);
 addViewportControls($("#captureChart"));
 window.addEventListener("resize", drawAll);

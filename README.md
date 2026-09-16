@@ -110,7 +110,9 @@ configuration.
 The static viewer is in [`docs/`](docs/), so this repository can be published
 directly with GitHub Pages. It connects through Web Serial in Chrome or Edge,
 downloads the completed RAM capture, verifies its CRC, and plots X/Y/Z plus
-acceleration magnitude. It can also open and save raw `.egg` capture files.
+acceleration magnitude. It can also open and save raw `.egg` capture files, or
+export a plain Excel-friendly CSV with time, X/Y/Z acceleration, and magnitude
+in g.
 
 The `download` USB command sends an `EGG1` version-1 binary frame: a 32-byte
 little-endian header followed by chronological raw signed 16-bit X/Y/Z samples.
