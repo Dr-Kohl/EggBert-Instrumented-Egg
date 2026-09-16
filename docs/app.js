@@ -26,6 +26,18 @@ function parseEgg(bytes) {
   return { flags, sampleRate, sampleCount, triggerOffset, postSamples, x, y, z, magnitude, validCrc: crc32(bytes.slice(headerBytes)) === expectedCrc };
 }
 
+function detectFlight() {
+  if (!capture) return undefined;
+  const observedFreefall = capture.magnitude.findIndex(value => value < 0.45);
+  const headerFreefall = (capture.flags & FLAG_FREEFALL) && capture.triggerOffset < capture.sampleCount && capture.magnitude[capture.triggerOffset] < 0.45;
+  const startIndex = headerFreefall ? capture.triggerOffset : observedFreefall;
+  if (startIndex < 0) return undefined;
+  const earliestImpact = startIndex + Math.max(1, Math.round(capture.sampleRate * 0.04));
+  for (let index = earliestImpact; index < capture.sampleCount; index += 1)
+    if (capture.magnitude[index] > 2) return { startIndex, impactIndex: index };
+  return undefined;
+}
+
 function displayCapture(bytes) {
   capture = parseEgg(bytes); captureBytes = bytes;
   chartMode = "axes";
@@ -35,6 +47,16 @@ function displayCapture(bytes) {
   $("#sampleRate").textContent = `${capture.sampleRate.toLocaleString()} Hz`;
   const trigger = (capture.flags & FLAG_TRIGGERED) ? ((capture.flags & FLAG_FREEFALL) ? "Freefall" : "Impact") : "No event";
   $("#triggerType").textContent = trigger + ((capture.flags & FLAG_FIFO_OVERRUN) ? " · FIFO overrun" : "");
+  const flight = detectFlight();
+  if (flight) {
+    const seconds = (flight.impactIndex - flight.startIndex) / capture.sampleRate;
+    const heightMeters = 9.80665 * seconds * seconds / 8;
+    $("#flightTime").textContent = `${seconds.toFixed(3)} s`;
+    $("#peakHeight").textContent = `${heightMeters.toFixed(2)} m (${(heightMeters * 3.28084).toFixed(1)} ft)`;
+  } else {
+    $("#flightTime").textContent = "Not detected";
+    $("#peakHeight").textContent = "—";
+  }
   $("#integrity").textContent = capture.validCrc ? "CRC verified" : "CRC FAILED";
   $("#integrity").style.color = capture.validCrc ? "" : "#b00020";
   $("#saveButton").disabled = false; $("#saveCsvButton").disabled = false; drawAll();
@@ -99,8 +121,14 @@ function detectEvents() {
     if (capture.magnitude[i] > peak) { peak = capture.magnitude[i]; peakIndex = i; }
     if (Math.abs(capture.x[i]) >= 15.9 || Math.abs(capture.y[i]) >= 15.9 || Math.abs(capture.z[i]) >= 15.9) add(i, "Saturation", "#b00020");
   }
-  const freefallIndex = capture.magnitude.findIndex(value => value < 0.25);
-  if (freefallIndex >= 0) add(freefallIndex, "Freefall", "#2463c5");
+  const flight = detectFlight();
+  if (flight) {
+    add(flight.startIndex, "Flight start", "#2463c5");
+    add(flight.impactIndex, "Impact detected", "#b00020");
+  } else {
+    const freefallIndex = capture.magnitude.findIndex(value => value < 0.25);
+    if (freefallIndex >= 0) add(freefallIndex, "Freefall", "#2463c5");
+  }
   if (peak > 2) add(peakIndex, "Peak impact", "#b00020");
   if (events.length === 0 || peak <= 2) add(0, "Gravity baseline", "#6240a0");
   return events.sort((a, b) => a.index - b.index);

@@ -115,6 +115,10 @@ export a plain Excel-friendly CSV with time, X/Y/Z acceleration, and magnitude
 in g. In Chrome or Edge, each export opens a Save As dialog with a timestamped
 EggBert filename suggestion that the user can edit and save anywhere.
 
+For freefall captures with a detected impact, the viewer also shows detected
+flight time and an estimated peak height, calculated as `gT^2 / 8`. The height
+assumes a near-vertical throw with approximately equal release and catch height.
+
 The `download` USB command sends an `EGG1` version-1 binary frame: a 32-byte
 little-endian header followed by chronological raw signed 16-bit X/Y/Z samples.
 The header contains the sample rate, counts-per-g conversion, event marker,
