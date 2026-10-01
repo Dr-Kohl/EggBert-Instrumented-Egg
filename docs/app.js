@@ -246,12 +246,14 @@ function makeOrientationView() {
   const host = $("#orientationCanvas"), scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(34, 1, .1, 100);
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  host.replaceChildren(renderer.domElement); scene.background = new THREE.Color(0xe8edf0); camera.position.set(4.8, 3.5, 6.8); camera.lookAt(0, .2, 0);
+  host.replaceChildren(renderer.domElement); scene.background = new THREE.Color(0xe8edf0); camera.position.set(0, 1.8, 7.5); camera.lookAt(0, 0, 0);
   const light = new THREE.DirectionalLight(0xffffff, 2.4); light.position.set(4, 6, 5); light.castShadow = true; scene.add(light, new THREE.HemisphereLight(0xcfe4ff, 0x4b5560, 1.4));
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ color: 0x223344, opacity: .18 })); floor.rotation.x = -Math.PI / 2; floor.position.y = -1.05; floor.receiveShadow = true; scene.add(floor);
-  const sensorFrame = new THREE.Group(); scene.add(sensorFrame);
-  Promise.all([loadStl("models/eggbert-bottom.stl", 0x55514a), loadStl("models/eggbert-top.stl", 0xd9d0b6)]).then(parts => parts.forEach(part => sensorFrame.add(part))).catch(error => { $("#orientationStatus").textContent = error.message; });
-  renderer.domElement.addEventListener("wheel", event => { camera.position.multiplyScalar(event.deltaY > 0 ? 1.08 : .92); camera.position.clampLength(4, 10); camera.lookAt(0, .2, 0); event.preventDefault(); }, { passive: false });
+  const sensorFrame = new THREE.Group(), caseFrame = new THREE.Group();
+  // +Y home: EggBert rests on the button edge, screen faces the viewer, and USB points left.
+  caseFrame.rotation.set(Math.PI / 2, 0, Math.PI); sensorFrame.add(caseFrame); scene.add(sensorFrame);
+  Promise.all([loadStl("models/eggbert-bottom.stl", 0x55514a), loadStl("models/eggbert-top.stl", 0xd9d0b6)]).then(parts => parts.forEach(part => caseFrame.add(part))).catch(error => { $("#orientationStatus").textContent = error.message; });
+  renderer.domElement.addEventListener("wheel", event => { camera.position.multiplyScalar(event.deltaY > 0 ? 1.08 : .92); camera.position.clampLength(4, 10); camera.lookAt(0, 0, 0); event.preventDefault(); }, { passive: false });
   const render = () => { const width = host.clientWidth, height = host.clientHeight; if (renderer.domElement.width !== Math.round(width * renderer.getPixelRatio()) || renderer.domElement.height !== Math.round(height * renderer.getPixelRatio())) { renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix(); } renderer.render(scene, camera); requestAnimationFrame(render); }; render();
   orientationView = { sensorFrame }; return orientationView;
 }
