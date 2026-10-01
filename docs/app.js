@@ -233,6 +233,13 @@ async function downloadCapture() {
 
 $("#connectButton").addEventListener("click", () => connect().catch(error => { setError(error.message); setStatus("No device connected."); }));
 $("#downloadButton").addEventListener("click", () => downloadCapture().catch(error => { setError(error.message); setStatus("Download did not complete."); }));
+async function loadStl(url, color) {
+  const response = await fetch(url); if (!response.ok) throw new Error(`Could not load ${url}.`);
+  const data = new DataView(await response.arrayBuffer()), triangleCount = data.getUint32(80, true), positions = new Float32Array(triangleCount * 9);
+  for (let triangle = 0, offset = 84; triangle < triangleCount; triangle += 1, offset += 50) for (let vertex = 0; vertex < 3; vertex += 1) for (let axis = 0; axis < 3; axis += 1) positions[triangle * 9 + vertex * 3 + axis] = data.getFloat32(offset + 12 + vertex * 12 + axis * 4, true);
+  const geometry = new THREE.BufferGeometry(); geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3)); geometry.rotateX(-Math.PI / 2); geometry.scale(.045, .045, .045); geometry.computeVertexNormals();
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color, roughness: .62, metalness: .06 })); mesh.castShadow = mesh.receiveShadow = true; return mesh;
+}
 function makeOrientationView() {
   if (orientationView) return orientationView;
   if (!window.THREE) throw new Error("The 3D viewer library did not load. Check the internet connection and reload this page.");
@@ -242,18 +249,8 @@ function makeOrientationView() {
   host.replaceChildren(renderer.domElement); scene.background = new THREE.Color(0xe8edf0); camera.position.set(4.8, 3.5, 6.8); camera.lookAt(0, .2, 0);
   const light = new THREE.DirectionalLight(0xffffff, 2.4); light.position.set(4, 6, 5); light.castShadow = true; scene.add(light, new THREE.HemisphereLight(0xcfe4ff, 0x4b5560, 1.4));
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ color: 0x223344, opacity: .18 })); floor.rotation.x = -Math.PI / 2; floor.position.y = -1.05; floor.receiveShadow = true; scene.add(floor);
-  const orbit = new THREE.Group(), sensorFrame = new THREE.Group(); orbit.add(sensorFrame); scene.add(orbit);
-  const outline = [[-1.28,-.92],[1.28,-.92],[1.58,-.62],[1.58,.62],[1.28,.92],[-1.28,.92],[-1.58,.62],[-1.58,-.62]];
-  const shape = new THREE.Shape(); outline.forEach(([x,z], i) => i ? shape.lineTo(x, z) : shape.moveTo(x, z)); shape.closePath();
-  const bodyGeometry = new THREE.ExtrudeGeometry(shape, { depth: .86, bevelEnabled: true, bevelSegments: 3, bevelSize: .075, bevelThickness: .075 }); bodyGeometry.rotateX(Math.PI / 2); bodyGeometry.translate(0, .43, 0);
-  const body = new THREE.Mesh(bodyGeometry, new THREE.MeshStandardMaterial({ color: 0xd9d0b6, roughness: .65, metalness: .05 })); body.castShadow = body.receiveShadow = true; sensorFrame.add(body);
-  const screenFrame = new THREE.Mesh(new THREE.BoxGeometry(1.45, .08, .88), new THREE.MeshStandardMaterial({ color: 0x25282a, roughness: .55 })); screenFrame.position.set(0, .08, .96); sensorFrame.add(screenFrame);
-  const screen = new THREE.Mesh(new THREE.PlaneGeometry(1.25, .67), new THREE.MeshStandardMaterial({ color: 0x263a44, roughness: .28, metalness: .22 })); screen.position.set(0, .08, 1.01); sensorFrame.add(screen);
-  const buttonMaterial = new THREE.MeshStandardMaterial({ color: 0x343536, roughness: .4, metalness: .35 });
-  [[-.72,.12],[0,.3],[.72,.12]].forEach(([x,z]) => { const button = new THREE.Mesh(new THREE.CylinderGeometry(.17, .17, .085, 28), buttonMaterial); button.position.set(x, .51, z); button.castShadow = true; sensorFrame.add(button); });
-  const usb = new THREE.Mesh(new THREE.BoxGeometry(.08, .28, .42), new THREE.MeshStandardMaterial({ color: 0x303438, metalness: .55, roughness: .28 })); usb.position.set(1.62, -.1, 0); sensorFrame.add(usb);
-  const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(Object.assign(document.createElement("canvas"), { width: 480, height: 96 })) }));
-  const labelContext = label.material.map.image.getContext("2d"); labelContext.fillStyle="#1d2930"; labelContext.font="bold 44px sans-serif"; labelContext.textAlign="center"; labelContext.fillText("+Y button side", 240, 58); label.material.map.needsUpdate = true; label.scale.set(2.6, .52, 1); label.position.set(0, .98, 0); sensorFrame.add(label);
+  const sensorFrame = new THREE.Group(); scene.add(sensorFrame);
+  Promise.all([loadStl("models/eggbert-bottom.stl", 0x55514a), loadStl("models/eggbert-top.stl", 0xd9d0b6)]).then(parts => parts.forEach(part => sensorFrame.add(part))).catch(error => { $("#orientationStatus").textContent = error.message; });
   renderer.domElement.addEventListener("wheel", event => { camera.position.multiplyScalar(event.deltaY > 0 ? 1.08 : .92); camera.position.clampLength(4, 10); camera.lookAt(0, .2, 0); event.preventDefault(); }, { passive: false });
   const render = () => { const width = host.clientWidth, height = host.clientHeight; if (renderer.domElement.width !== Math.round(width * renderer.getPixelRatio()) || renderer.domElement.height !== Math.round(height * renderer.getPixelRatio())) { renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix(); } renderer.render(scene, camera); requestAnimationFrame(render); }; render();
   orientationView = { sensorFrame }; return orientationView;
