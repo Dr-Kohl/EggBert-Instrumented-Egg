@@ -238,7 +238,7 @@ async function loadStl(url, color) {
   const response = await fetch(url); if (!response.ok) throw new Error(`Could not load ${url}.`);
   const data = new DataView(await response.arrayBuffer()), triangleCount = data.getUint32(80, true), positions = new Float32Array(triangleCount * 9);
   for (let triangle = 0, offset = 84; triangle < triangleCount; triangle += 1, offset += 50) for (let vertex = 0; vertex < 3; vertex += 1) for (let axis = 0; axis < 3; axis += 1) positions[triangle * 9 + vertex * 3 + axis] = data.getFloat32(offset + 12 + vertex * 12 + axis * 4, true);
-  const geometry = new THREE.BufferGeometry(); geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3)); geometry.rotateX(-Math.PI / 2); geometry.scale(.045, .045, .045); geometry.computeVertexNormals();
+  const geometry = new THREE.BufferGeometry(); geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3)); geometry.scale(.045, .045, .045); geometry.computeVertexNormals();
   const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color, roughness: .62, metalness: .06 })); mesh.castShadow = mesh.receiveShadow = true; return mesh;
 }
 function makeOrientationView() {
@@ -250,14 +250,14 @@ function makeOrientationView() {
   host.replaceChildren(renderer.domElement); scene.background = new THREE.Color(0xe8edf0); camera.position.set(0, 1.8, -7.5); camera.lookAt(0, 0, 0);
   const light = new THREE.DirectionalLight(0xffffff, 2.4); light.position.set(4, 6, 5); light.castShadow = true; scene.add(light, new THREE.HemisphereLight(0xcfe4ff, 0x4b5560, 1.4));
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ color: 0x223344, opacity: .18 })); floor.rotation.x = -Math.PI / 2; floor.position.y = -1.05; floor.receiveShadow = true; scene.add(floor);
-  const sensorFrame = new THREE.Group(), caseFrame = new THREE.Group();
-  // +Y home: EggBert rests on the button edge, screen faces the viewer, and USB points left.
-  // Preserve screen-facing Z while reversing the displayed X/Y directions: buttons are at the bottom.
-  caseFrame.rotation.set(Math.PI / 2, 0, 0); sensorFrame.add(caseFrame); scene.add(sensorFrame);
+  const motionFrame = new THREE.Group(), caseFrame = new THREE.Group();
+  // CAD and sensor axes agree: +X USB, +Y buttons, +Z out through the screen.
+  // In the +Y-down home pose: buttons are down, screen faces the viewer, USB is left.
+  caseFrame.rotation.set(Math.PI, 0, 0); motionFrame.add(caseFrame); scene.add(motionFrame);
   Promise.all([loadStl("models/eggbert-bottom.stl", 0x55514a), loadStl("models/eggbert-top.stl", 0xd9d0b6)]).then(parts => parts.forEach(part => caseFrame.add(part))).catch(error => { $("#orientationStatus").textContent = error.message; });
   renderer.domElement.addEventListener("wheel", event => { camera.position.multiplyScalar(event.deltaY > 0 ? 1.08 : .92); camera.position.clampLength(4, 10); camera.lookAt(0, 0, 0); event.preventDefault(); }, { passive: false });
   const render = () => { const width = host.clientWidth, height = host.clientHeight; if (renderer.domElement.width !== Math.round(width * renderer.getPixelRatio()) || renderer.domElement.height !== Math.round(height * renderer.getPixelRatio())) { renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix(); } renderer.render(scene, camera); requestAnimationFrame(render); }; render();
-  orientationView = { sensorFrame }; return orientationView;
+  orientationView = { motionFrame }; return orientationView;
 }
 async function setOrientation(on) {
   if (!port) return;
@@ -269,7 +269,7 @@ async function setOrientation(on) {
   try {
     while (orientationActive) {
       const result = await reader.read(); if (result.done) break; buffer += decoder.decode(result.value, { stream: true }); const lines = buffer.split("\n"); buffer = lines.pop();
-      for (const line of lines) { const match = /^O,(-?\d+),(-?\d+),(-?\d+)$/.exec(line.trim()); if (!match) continue; const x = +match[1], y = +match[2], z = +match[3], pitch = Math.atan2(x, Math.hypot(y, z)) * 180 / Math.PI, roll = Math.atan2(z, Math.hypot(x, y)) * 180 / Math.PI; orientationView.sensorFrame.rotation.set(roll * Math.PI / 180, 0, -pitch * Math.PI / 180); $("#orientationStatus").textContent = `Pitch ${pitch.toFixed(1)}° · Roll ${roll.toFixed(1)}°`; }
+      for (const line of lines) { const match = /^O,(-?\d+),(-?\d+),(-?\d+)$/.exec(line.trim()); if (!match) continue; const x = +match[1], y = +match[2], z = +match[3], pitch = Math.atan2(x, Math.hypot(y, z)) * 180 / Math.PI, roll = Math.atan2(z, Math.hypot(x, y)) * 180 / Math.PI; orientationView.motionFrame.rotation.set(roll * Math.PI / 180, 0, -pitch * Math.PI / 180); $("#orientationStatus").textContent = `Pitch ${pitch.toFixed(1)}° · Roll ${roll.toFixed(1)}°`; }
     }
   } finally {
     if (activeReader === reader) activeReader = undefined; reader.releaseLock();
