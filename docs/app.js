@@ -196,10 +196,11 @@ async function connect() {
 }
 
 async function disconnect() {
+  orientationActive = false;
   if (activeReader) await activeReader.cancel();
   if (port) await port.close();
   port = undefined; activeReader = undefined;
-  $("#connectButton").textContent = "Connect EggBert"; $("#connectButton").disabled = false; $("#downloadButton").disabled = true;
+  $("#connectButton").textContent = "Connect EggBert"; $("#connectButton").disabled = false; $("#downloadButton").disabled = true; $("#orientationButton").disabled = true; $("#orientationStopButton").disabled = true; $("#orientation").hidden = true;
   setStatus("Device disconnected.");
 }
 
@@ -246,7 +247,7 @@ function makeOrientationView() {
   const host = $("#orientationCanvas"), scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(34, 1, .1, 100);
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  host.replaceChildren(renderer.domElement); scene.background = new THREE.Color(0xe8edf0); camera.position.set(0, 1.8, 7.5); camera.lookAt(0, 0, 0);
+  host.replaceChildren(renderer.domElement); scene.background = new THREE.Color(0xe8edf0); camera.position.set(0, 1.8, -7.5); camera.lookAt(0, 0, 0);
   const light = new THREE.DirectionalLight(0xffffff, 2.4); light.position.set(4, 6, 5); light.castShadow = true; scene.add(light, new THREE.HemisphereLight(0xcfe4ff, 0x4b5560, 1.4));
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ color: 0x223344, opacity: .18 })); floor.rotation.x = -Math.PI / 2; floor.position.y = -1.05; floor.receiveShadow = true; scene.add(floor);
   const sensorFrame = new THREE.Group(), caseFrame = new THREE.Group();
@@ -257,7 +258,23 @@ function makeOrientationView() {
   const render = () => { const width = host.clientWidth, height = host.clientHeight; if (renderer.domElement.width !== Math.round(width * renderer.getPixelRatio()) || renderer.domElement.height !== Math.round(height * renderer.getPixelRatio())) { renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix(); } renderer.render(scene, camera); requestAnimationFrame(render); }; render();
   orientationView = { sensorFrame }; return orientationView;
 }
-async function setOrientation(on) { if (!port) return; if (on) makeOrientationView(); const w=port.writable.getWriter(); await w.write(new TextEncoder().encode(`orientation ${on?"on":"off"}\n`)); w.releaseLock(); orientationActive=on; $("#orientationButton").disabled=on; $("#orientationStopButton").disabled=!on; $("#downloadButton").disabled=on; if(!on){if(activeReader) await activeReader.cancel(); return;} const r=port.readable.getReader(); activeReader=r; let b="",d=new TextDecoder(); try{while(orientationActive){const q=await r.read();if(q.done)break;b+=d.decode(q.value,{stream:true});const ls=b.split("\n");b=ls.pop();for(const l of ls){const m=/^O,(-?\d+),(-?\d+),(-?\d+)$/.exec(l.trim());if(!m)continue;const x=+m[1],y=+m[2],z=+m[3],p=Math.atan2(x,Math.hypot(y,z))*180/Math.PI,roll=Math.atan2(z,Math.hypot(x,y))*180/Math.PI;orientationView.sensorFrame.rotation.set(roll*Math.PI/180,0,-p*Math.PI/180);$("#orientationStatus").textContent=`Pitch ${p.toFixed(1)}° · Roll ${roll.toFixed(1)}°`;}}}finally{if(activeReader===r)activeReader=undefined;r.releaseLock(); $("#downloadButton").disabled = false;}}
+async function setOrientation(on) {
+  if (!port) return;
+  if (on) makeOrientationView();
+  const writer = port.writable.getWriter(); await writer.write(new TextEncoder().encode(`orientation ${on ? "on" : "off"}\n`)); writer.releaseLock();
+  orientationActive = on; $("#orientationButton").disabled = on; $("#orientationStopButton").disabled = !on; $("#downloadButton").disabled = on;
+  if (!on) { $("#orientationStatus").textContent = "Stopping and releasing EggBert…"; if (activeReader) await activeReader.cancel(); else await disconnect(); return; }
+  const reader = port.readable.getReader(); activeReader = reader; let buffer = "", decoder = new TextDecoder();
+  try {
+    while (orientationActive) {
+      const result = await reader.read(); if (result.done) break; buffer += decoder.decode(result.value, { stream: true }); const lines = buffer.split("\n"); buffer = lines.pop();
+      for (const line of lines) { const match = /^O,(-?\d+),(-?\d+),(-?\d+)$/.exec(line.trim()); if (!match) continue; const x = +match[1], y = +match[2], z = +match[3], pitch = Math.atan2(x, Math.hypot(y, z)) * 180 / Math.PI, roll = Math.atan2(z, Math.hypot(x, y)) * 180 / Math.PI; orientationView.sensorFrame.rotation.set(roll * Math.PI / 180, 0, -pitch * Math.PI / 180); $("#orientationStatus").textContent = `Pitch ${pitch.toFixed(1)}° · Roll ${roll.toFixed(1)}°`; }
+    }
+  } finally {
+    if (activeReader === reader) activeReader = undefined; reader.releaseLock();
+    if (!orientationActive && port) await disconnect(); else $("#downloadButton").disabled = false;
+  }
+}
 $("#orientationButton").addEventListener("click",()=>setOrientation(true).catch(e=>setError(e.message)));$("#orientationStopButton").addEventListener("click",()=>setOrientation(false).catch(e=>setError(e.message)));
 $("#fileInput").addEventListener("change", async event => { try { setError(""); displayCapture(new Uint8Array(await event.target.files[0].arrayBuffer())); setStatus("Capture file opened."); } catch (error) { setError(error.message); } event.target.value = ""; });
 $("#sampleSelect").addEventListener("change", async event => { const filename = event.target.value; if (!filename) return; try { setError(""); setStatus("Loading sample capture…"); const response = await fetch("sample-data/" + filename); if (!response.ok) throw new Error("Could not load sample capture (" + response.status + ")."); displayCapture(new Uint8Array(await response.arrayBuffer())); setStatus("Sample capture opened."); } catch (error) { setError(error.message); setStatus("Sample did not load."); } event.target.value = ""; });
