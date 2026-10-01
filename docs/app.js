@@ -2,7 +2,7 @@
 
 const HEADER_BYTES = 32, MAGIC = [0x45, 0x47, 0x47, 0x31];
 const FLAG_TRIGGERED = 1, FLAG_FREEFALL = 2, FLAG_FIFO_OVERRUN = 4;
-let port, activeReader, capture, captureBytes, showLabels = true;
+let port, activeReader, capture, captureBytes, showLabels = true, orientationActive = false;
 let viewStart = 0, viewSeconds = 0, drag, chartMode = "axes";
 const $ = selector => document.querySelector(selector);
 const setStatus = text => { $("#connectionStatus").textContent = text; };
@@ -192,7 +192,7 @@ function addViewportControls(canvas) {
 async function connect() {
   if (!("serial" in navigator)) throw new Error("Web Serial is unavailable. Use Chrome or Edge over HTTPS, or open a saved .egg file.");
   port = await navigator.serial.requestPort(); await port.open({ baudRate: 115200, bufferSize: 65536 });
-  $("#connectButton").textContent = "EggBert connected"; $("#connectButton").disabled = true; $("#downloadButton").disabled = false; setStatus("EggBert connected. Complete the test using EggBert's buttons, then download it here.");
+  $("#connectButton").textContent = "EggBert connected"; $("#connectButton").disabled = true; $("#downloadButton").disabled = false; $("#orientation").hidden = false; $("#orientationButton").disabled = false; setStatus("EggBert connected. Complete the test using EggBert's buttons, then download it here.");
 }
 
 async function disconnect() {
@@ -233,6 +233,8 @@ async function downloadCapture() {
 
 $("#connectButton").addEventListener("click", () => connect().catch(error => { setError(error.message); setStatus("No device connected."); }));
 $("#downloadButton").addEventListener("click", () => downloadCapture().catch(error => { setError(error.message); setStatus("Download did not complete."); }));
+async function setOrientation(on) { if (!port) return; const w=port.writable.getWriter(); await w.write(new TextEncoder().encode(`orientation ${on?"on":"off"}\n`)); w.releaseLock(); orientationActive=on; $("#orientationButton").disabled=on; $("#orientationStopButton").disabled=!on; if(!on){if(activeReader) await activeReader.cancel(); return;} const r=port.readable.getReader(); activeReader=r; let b="",d=new TextDecoder(); try{while(orientationActive){const q=await r.read();if(q.done)break;b+=d.decode(q.value,{stream:true});const ls=b.split("\n");b=ls.pop();for(const l of ls){const m=/^O,(-?\d+),(-?\d+),(-?\d+)$/.exec(l.trim());if(!m)continue;const x=+m[1],y=+m[2],z=+m[3],p=Math.atan2(x,Math.hypot(y,z))*180/Math.PI,roll=Math.atan2(z,Math.hypot(x,y))*180/Math.PI;$("#eggModel").style.transform=`perspective(500px) rotateX(${roll}deg) rotateZ(${-p}deg)`;$("#orientationStatus").textContent=`Pitch ${p.toFixed(1)}° · Roll ${roll.toFixed(1)}°`;}}}finally{if(activeReader===r)activeReader=undefined;r.releaseLock();}}
+$("#orientationButton").addEventListener("click",()=>setOrientation(true).catch(e=>setError(e.message)));$("#orientationStopButton").addEventListener("click",()=>setOrientation(false).catch(e=>setError(e.message)));
 $("#fileInput").addEventListener("change", async event => { try { setError(""); displayCapture(new Uint8Array(await event.target.files[0].arrayBuffer())); setStatus("Capture file opened."); } catch (error) { setError(error.message); } event.target.value = ""; });
 $("#sampleSelect").addEventListener("change", async event => { const filename = event.target.value; if (!filename) return; try { setError(""); setStatus("Loading sample capture…"); const response = await fetch("sample-data/" + filename); if (!response.ok) throw new Error("Could not load sample capture (" + response.status + ")."); displayCapture(new Uint8Array(await response.arrayBuffer())); setStatus("Sample capture opened."); } catch (error) { setError(error.message); setStatus("Sample did not load."); } event.target.value = ""; });
 $("#showLabels").addEventListener("click", event => { showLabels = !showLabels; event.currentTarget.setAttribute("aria-pressed", String(showLabels)); drawAll(); });
