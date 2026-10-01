@@ -124,6 +124,28 @@ little-endian header followed by chronological raw signed 16-bit X/Y/Z samples.
 The header contains the sample rate, counts-per-g conversion, event marker,
 post-event sample count, flags, and a payload CRC-32.
 
+### Live orientation viewer
+
+The GitHub Pages viewer also has a live 3D orientation panel. It uses the
+actual enclosure meshes in `docs/models/eggbert-bottom.stl` and
+`docs/models/eggbert-top.stl`; do not replace them with a generic box model.
+After Web Serial connects, it sends `orientation on` and receives lines in the
+form `O,x,y,z`. **Stop** sends `orientation off` and releases the USB serial
+port, so a later session starts with a fresh Connect action.
+
+CAD and sensor axes intentionally agree:
+
+| Positive axis | Physical direction |
+|---|---|
+| +X | USB-port side |
+| +Y | button side (under the buttons) |
+| +Z | out through the screen face |
+
+The viewer's home pose is +Y down: buttons down, screen facing the viewer, and
+USB visually left. The current viewer uses accelerometer pitch and roll only;
+yaw is deliberately fixed. A future gyro/sensor-fusion addition may improve
+motion and yaw behavior, but it must preserve this CAD-to-sensor mapping.
+
 ## Deliberate exclusions
 
 GPIO16–21 are reserved for the LSM6DSV IMU; GPIO29 is the OUT+ voltage sense;
