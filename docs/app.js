@@ -239,7 +239,7 @@ function makeOrientationView() {
   const host = $("#orientationCanvas"), scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(34, 1, .1, 100);
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  host.replaceChildren(renderer.domElement); scene.background = new THREE.Color(0xe8edf0); camera.position.set(4.8, 3.5, 5.2);
+  host.replaceChildren(renderer.domElement); scene.background = new THREE.Color(0xe8edf0); camera.position.set(4.8, 3.5, 6.8); camera.lookAt(0, .2, 0);
   const light = new THREE.DirectionalLight(0xffffff, 2.4); light.position.set(4, 6, 5); light.castShadow = true; scene.add(light, new THREE.HemisphereLight(0xcfe4ff, 0x4b5560, 1.4));
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ color: 0x223344, opacity: .18 })); floor.rotation.x = -Math.PI / 2; floor.position.y = -1.05; floor.receiveShadow = true; scene.add(floor);
   const orbit = new THREE.Group(), sensorFrame = new THREE.Group(); orbit.add(sensorFrame); scene.add(orbit);
@@ -254,7 +254,7 @@ function makeOrientationView() {
   const usb = new THREE.Mesh(new THREE.BoxGeometry(.08, .28, .42), new THREE.MeshStandardMaterial({ color: 0x303438, metalness: .55, roughness: .28 })); usb.position.set(1.62, -.1, 0); sensorFrame.add(usb);
   const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(Object.assign(document.createElement("canvas"), { width: 480, height: 96 })) }));
   const labelContext = label.material.map.image.getContext("2d"); labelContext.fillStyle="#1d2930"; labelContext.font="bold 44px sans-serif"; labelContext.textAlign="center"; labelContext.fillText("+Y button side", 240, 58); label.material.map.needsUpdate = true; label.scale.set(2.6, .52, 1); label.position.set(0, .98, 0); sensorFrame.add(label);
-  let dragging, lastX, lastY; renderer.domElement.addEventListener("pointerdown", event => { dragging = true; lastX = event.clientX; lastY = event.clientY; renderer.domElement.setPointerCapture(event.pointerId); }); renderer.domElement.addEventListener("pointerup", () => { dragging = false; }); renderer.domElement.addEventListener("pointermove", event => { if (!dragging) return; orbit.rotation.y += (event.clientX - lastX) * .012; orbit.rotation.x += (event.clientY - lastY) * .012; orbit.rotation.x = Math.max(-.65, Math.min(.65, orbit.rotation.x)); lastX = event.clientX; lastY = event.clientY; }); renderer.domElement.addEventListener("wheel", event => { camera.position.multiplyScalar(event.deltaY > 0 ? 1.08 : .92); camera.position.clampLength(4, 10); event.preventDefault(); }, { passive: false });
+  renderer.domElement.addEventListener("wheel", event => { camera.position.multiplyScalar(event.deltaY > 0 ? 1.08 : .92); camera.position.clampLength(4, 10); camera.lookAt(0, .2, 0); event.preventDefault(); }, { passive: false });
   const render = () => { const width = host.clientWidth, height = host.clientHeight; if (renderer.domElement.width !== Math.round(width * renderer.getPixelRatio()) || renderer.domElement.height !== Math.round(height * renderer.getPixelRatio())) { renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix(); } renderer.render(scene, camera); requestAnimationFrame(render); }; render();
   orientationView = { sensorFrame }; return orientationView;
 }
