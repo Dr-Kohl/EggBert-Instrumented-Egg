@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.13)
 
 # RP2354A uses the RP2350 family. Override PICO_SDK_PATH if your SDK lives elsewhere.
 set(PICO_PLATFORM rp2350 CACHE STRING "Pico SDK platform")
+# EggBert uses the RP2354A's 2 MB in-package flash, not Pico 2's 4 MB default.
+# The final two 4 KB sectors are reserved for redundant calibration records.
+set(PICO_FLASH_SIZE_BYTES 2097152 CACHE STRING "EggBert flash size" FORCE)
 
 if (NOT DEFINED ENV{PICO_SDK_PATH})
     set(PICO_SDK_PATH "C:/Users/Kohlc/AppData/Local/Arduino15/packages/rp2040/hardware/rp2040/5.6.0/pico-sdk"
@@ -35,7 +38,13 @@ target_link_libraries(eggbert_bringup PRIVATE
     hardware_adc
     hardware_i2c
     hardware_spi
+    hardware_flash
 )
+
+# Leave the final 8 KB outside the linkable image.  The firmware uses those
+# two sectors as an A/B journal for inclinometer calibration.
+pico_set_linker_script(eggbert_bringup ${CMAKE_CURRENT_LIST_DIR}/memmap_eggbert.ld)
+target_link_options(eggbert_bringup PRIVATE "LINKER:-L${CMAKE_CURRENT_LIST_DIR}")
 
 # USB CDC gives a serial log; no physical UART wiring is assumed.
 pico_enable_stdio_usb(eggbert_bringup 1)

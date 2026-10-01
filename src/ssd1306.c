@@ -98,6 +98,19 @@ void ssd1306_ui_text(uint8_t x, uint8_t y, const char *text, bool on) {
     }
 }
 
+void ssd1306_ui_text_double_height(uint8_t x, uint8_t y, const char *text, bool on) {
+    while (*text && x + 5u <= UI_WIDTH) {
+        const uint8_t *glyph = glyphs[glyph_index(*text++)];
+        for (uint8_t col = 0; col < 5u; ++col)
+            for (uint8_t row = 0; row < 7u; ++row)
+                if (glyph[col] & (1u << row)) {
+                    ssd1306_ui_pixel((uint8_t)(x + col), (uint8_t)(y + row * 2u), on);
+                    ssd1306_ui_pixel((uint8_t)(x + col), (uint8_t)(y + row * 2u + 1u), on);
+                }
+        x = (uint8_t)(x + 6u);
+    }
+}
+
 void ssd1306_ui_text_scaled(uint8_t x, uint8_t y, const char *text, bool on, uint8_t scale) {
     if (scale == 0) return;
     while (*text && x + 5u * scale <= UI_WIDTH) {
