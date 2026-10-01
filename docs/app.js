@@ -252,7 +252,8 @@ function makeOrientationView() {
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ color: 0x223344, opacity: .18 })); floor.rotation.x = -Math.PI / 2; floor.position.y = -1.05; floor.receiveShadow = true; scene.add(floor);
   const sensorFrame = new THREE.Group(), caseFrame = new THREE.Group();
   // +Y home: EggBert rests on the button edge, screen faces the viewer, and USB points left.
-  caseFrame.rotation.set(Math.PI / 2, 0, Math.PI); sensorFrame.add(caseFrame); scene.add(sensorFrame);
+  // Preserve screen-facing Z while reversing the displayed X/Y directions: buttons are at the bottom.
+  caseFrame.rotation.set(Math.PI / 2, 0, 0); sensorFrame.add(caseFrame); scene.add(sensorFrame);
   Promise.all([loadStl("models/eggbert-bottom.stl", 0x55514a), loadStl("models/eggbert-top.stl", 0xd9d0b6)]).then(parts => parts.forEach(part => caseFrame.add(part))).catch(error => { $("#orientationStatus").textContent = error.message; });
   renderer.domElement.addEventListener("wheel", event => { camera.position.multiplyScalar(event.deltaY > 0 ? 1.08 : .92); camera.position.clampLength(4, 10); camera.lookAt(0, 0, 0); event.preventDefault(); }, { passive: false });
   const render = () => { const width = host.clientWidth, height = host.clientHeight; if (renderer.domElement.width !== Math.round(width * renderer.getPixelRatio()) || renderer.domElement.height !== Math.round(height * renderer.getPixelRatio())) { renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix(); } renderer.render(scene, camera); requestAnimationFrame(render); }; render();
