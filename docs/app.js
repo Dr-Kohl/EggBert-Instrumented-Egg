@@ -2,7 +2,7 @@
 
 const HEADER_BYTES = 32, MAGIC = [0x45, 0x47, 0x47, 0x31];
 const FLAG_TRIGGERED = 1, FLAG_FREEFALL = 2, FLAG_FIFO_OVERRUN = 4;
-let port, activeReader, capture, captureBytes, showLabels = true, orientationActive = false;
+let port, activeReader, capture, captureBytes, showLabels = true;
 let viewStart = 0, viewSeconds = 0, drag, chartMode = "axes";
 const $ = selector => document.querySelector(selector);
 const setStatus = text => { $("#connectionStatus").textContent = text; };
@@ -192,7 +192,7 @@ function addViewportControls(canvas) {
 async function connect() {
   if (!("serial" in navigator)) throw new Error("Web Serial is unavailable. Use Chrome or Edge over HTTPS, or open a saved .egg file.");
   port = await navigator.serial.requestPort(); await port.open({ baudRate: 115200, bufferSize: 65536 });
-  $("#connectButton").textContent = "EggBert connected"; $("#connectButton").disabled = true; $("#downloadButton").disabled = false; $("#orientationButton").disabled = false; $("#orientation").hidden = false; setStatus("EggBert connected. Complete the test using EggBert's buttons, then download it here.");
+  $("#connectButton").textContent = "EggBert connected"; $("#connectButton").disabled = true; $("#downloadButton").disabled = false; setStatus("EggBert connected. Complete the test using EggBert's buttons, then download it here.");
 }
 
 async function disconnect() {
@@ -233,16 +233,6 @@ async function downloadCapture() {
 
 $("#connectButton").addEventListener("click", () => connect().catch(error => { setError(error.message); setStatus("No device connected."); }));
 $("#downloadButton").addEventListener("click", () => downloadCapture().catch(error => { setError(error.message); setStatus("Download did not complete."); }));
-async function setOrientation(on) {
-  if (!port) return;
-  const writer = port.writable.getWriter(); await writer.write(new TextEncoder().encode(`orientation ${on ? "on" : "off"}\n`)); writer.releaseLock();
-  orientationActive = on; $("#orientationButton").disabled = on; $("#orientationStopButton").disabled = !on;
-  if (!on) { if (activeReader) await activeReader.cancel(); $("#orientationStatus").textContent = "Stopped."; return; }
-  const reader = port.readable.getReader(); activeReader = reader; const decoder = new TextDecoder(); let buffered = "";
-  try { while (orientationActive) { const {value, done} = await reader.read(); if (done) break; buffered += decoder.decode(value, {stream:true}); const lines = buffered.split("\n"); buffered = lines.pop(); for (const line of lines) { const m = /^O,(-?\d+),(-?\d+),(-?\d+)$/.exec(line.trim()); if (!m) continue; const x=+m[1],y=+m[2],z=+m[3]; const pitch=Math.atan2(x,Math.hypot(y,z))*180/Math.PI, roll=Math.atan2(z,Math.hypot(x,y))*180/Math.PI; $("#eggModel").style.transform=`rotateX(${roll}deg) rotateZ(${-pitch}deg)`; $("#orientationStatus").textContent=`Pitch ${pitch.toFixed(1)}° · Roll ${roll.toFixed(1)}°`; } } } finally { if (activeReader===reader) activeReader=undefined; reader.releaseLock(); }
-}
-$("#orientationButton").addEventListener("click", () => setOrientation(true).catch(error => setError(error.message)));
-$("#orientationStopButton").addEventListener("click", () => setOrientation(false).catch(error => setError(error.message)));
 $("#fileInput").addEventListener("change", async event => { try { setError(""); displayCapture(new Uint8Array(await event.target.files[0].arrayBuffer())); setStatus("Capture file opened."); } catch (error) { setError(error.message); } event.target.value = ""; });
 $("#sampleSelect").addEventListener("change", async event => { const filename = event.target.value; if (!filename) return; try { setError(""); setStatus("Loading sample capture…"); const response = await fetch("sample-data/" + filename); if (!response.ok) throw new Error("Could not load sample capture (" + response.status + ")."); displayCapture(new Uint8Array(await response.arrayBuffer())); setStatus("Sample capture opened."); } catch (error) { setError(error.message); setStatus("Sample did not load."); } event.target.value = ""; });
 $("#showLabels").addEventListener("click", event => { showLabels = !showLabels; event.currentTarget.setAttribute("aria-pressed", String(showLabels)); drawAll(); });
