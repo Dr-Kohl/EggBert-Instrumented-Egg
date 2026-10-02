@@ -185,6 +185,7 @@ typedef enum {
     UI_RECORD,
     UI_DROP_TEST,
     UI_CHALLENGES,
+    UI_ACCELERATION,
     UI_RAW_XYZ,
     UI_INCLINOMETER,
     UI_CALIBRATION,
@@ -349,14 +350,53 @@ static void ui_menu_item(uint8_t y, const char *text, bool selected) {
 
 static void show_home(void) {
     if (!oled_ok) return;
-    ui_begin(ui_selection == 7 ? "HOME 2" : "HOME 1", "I");
-    if (ui_selection == 7) ui_menu_item(38, "CAL", true);
+    ui_begin(ui_selection >= 7 ? "HOME 2" : "HOME 1", "I");
+    if (ui_selection >= 7) {
+        ui_menu_item(38, "RAW XYZ", ui_selection == 7);
+        ui_menu_item(51, "CAL", ui_selection == 8);
+    }
     else {
     ui_menu_item(25, "RECORD", ui_selection == 0); ui_menu_item(38, "CATCH", ui_selection == 1);
-    ui_menu_item(51, "PENDULUM", ui_selection == 2); ui_menu_item(64, "RAW XYZ", ui_selection == 3);
+    ui_menu_item(51, "PENDULUM", ui_selection == 2); ui_menu_item(64, "ACCEL (g)", ui_selection == 3);
     ui_menu_item(77, "LEVEL", ui_selection == 4); ui_menu_item(90, "FRICTION", ui_selection == 5);
     ui_menu_item(103, "BEAM", ui_selection == 6); }
     ssd1306_ui_text(18, 116, "MID GO", true);
+    ssd1306_show();
+}
+
+static void format_acceleration(char *text, size_t text_size, char axis, int32_t counts) {
+    // The live display uses the calibrated +/-2 g scale: 16,384 counts per g.
+    // Keep this integer-only, matching the compact Pico printf configuration.
+    int32_t hundredths = (counts * 100 + (counts >= 0 ?
+        (int32_t)(LIVE_ACCEL_COUNTS_PER_G / 2u) : -(int32_t)(LIVE_ACCEL_COUNTS_PER_G / 2u))) /
+        (int32_t)LIVE_ACCEL_COUNTS_PER_G;
+    char sign = hundredths < 0 ? '-' : '+';
+    uint32_t magnitude = (uint32_t)(hundredths < 0 ? -hundredths : hundredths);
+    if (axis == 'M') {
+        snprintf(text, text_size, "MAG %lu.%02lug",
+                 (unsigned long)(magnitude / 100u), (unsigned long)(magnitude % 100u));
+        return;
+    }
+    snprintf(text, text_size, "%c %c%lu.%02lug", axis, sign,
+             (unsigned long)(magnitude / 100u), (unsigned long)(magnitude % 100u));
+}
+
+static void show_acceleration(void) {
+    if (!oled_ok) return;
+    char text[13];
+    ui_begin("ACCELERATION", "I");
+    format_acceleration(text, sizeof text, 'X', live_accel_x);
+    ssd1306_ui_text(18, 28, text, true);
+    format_acceleration(text, sizeof text, 'Y', live_accel_y);
+    ssd1306_ui_text(18, 44, text, true);
+    format_acceleration(text, sizeof text, 'Z', live_accel_z);
+    ssd1306_ui_text(18, 60, text, true);
+    int32_t magnitude = (int32_t)sqrtf((float)live_accel_x * live_accel_x +
+                                       (float)live_accel_y * live_accel_y +
+                                       (float)live_accel_z * live_accel_z);
+    format_acceleration(text, sizeof text, 'M', magnitude);
+    ssd1306_ui_text(18, 82, text, true);
+    ssd1306_ui_text(18, 112, "MID EXIT", true);
     ssd1306_show();
 }
 
@@ -961,6 +1001,7 @@ static void show_ui(void) {
     case UI_RECORD: show_record_menu(); break;
     case UI_DROP_TEST: show_drop_test_menu(); break;
     case UI_CHALLENGES: show_challenges_menu(); break;
+    case UI_ACCELERATION: show_acceleration(); break;
     case UI_RAW_XYZ: show_raw_xyz(); break;
     case UI_INCLINOMETER: show_inclinometer(); break;
     case UI_CALIBRATION: show_calibration(); break;
@@ -1507,15 +1548,15 @@ static void handle_button_press(unsigned button) {
     }
 
     if (button == 0) {
-        unsigned count = ui_state == UI_HOME ? 8u :
-                         ((ui_state == UI_RAW_XYZ || ui_state == UI_INCLINOMETER || ui_state == UI_CALIBRATION) ? 1u : 2u);
+        unsigned count = ui_state == UI_HOME ? 9u :
+                         ((ui_state == UI_ACCELERATION || ui_state == UI_RAW_XYZ || ui_state == UI_INCLINOMETER || ui_state == UI_CALIBRATION) ? 1u : 2u);
         ui_selection = (ui_selection + count - 1u) % count;
         show_ui();
         return;
     }
     if (button == 2) {
-        unsigned count = ui_state == UI_HOME ? 8u :
-                         ((ui_state == UI_RAW_XYZ || ui_state == UI_INCLINOMETER || ui_state == UI_CALIBRATION) ? 1u : 2u);
+        unsigned count = ui_state == UI_HOME ? 9u :
+                         ((ui_state == UI_ACCELERATION || ui_state == UI_RAW_XYZ || ui_state == UI_INCLINOMETER || ui_state == UI_CALIBRATION) ? 1u : 2u);
         ui_selection = (ui_selection + 1u) % count;
         show_ui();
         return;
@@ -1527,10 +1568,11 @@ static void handle_button_press(unsigned button) {
         if (ui_selection == 0) { ui_state = UI_RECORD; ui_selection = 0; }
         else if (ui_selection == 1) { ui_state = UI_CHALLENGES; ui_selection = 0; }
         else if (ui_selection == 2) { pendulum_state = PENDULUM_READY; ui_state = UI_PENDULUM; ui_selection = 0; }
-        else if (ui_selection == 3) { ui_state = UI_RAW_XYZ; ui_selection = 0; }
+        else if (ui_selection == 3) { ui_state = UI_ACCELERATION; ui_selection = 0; }
         else if (ui_selection == 4) { ui_state = UI_INCLINOMETER; ui_selection = 0; }
         else if (ui_selection == 5) { friction_reset_session(); ui_state = UI_FRICTION; ui_selection = 0; }
         else if (ui_selection == 6) { beam_state = BEAM_READY; ui_state = UI_BEAM; ui_selection = 0; }
+        else if (ui_selection == 7) { ui_state = UI_RAW_XYZ; ui_selection = 0; }
         else { calibration_reset_wizard(); ui_state = UI_CALIBRATION; ui_selection = 0; }
         break;
     case UI_RECORD:
@@ -1549,12 +1591,16 @@ static void handle_button_press(unsigned button) {
         ui_state = UI_HOME;
         ui_selection = 0;
         break;
+    case UI_ACCELERATION:
+        ui_state = UI_HOME;
+        ui_selection = 3;
+        break;
     case UI_RAW_XYZ:
         ui_state = UI_HOME;
-        ui_selection = 0;
+        ui_selection = 7;
         break;
     case UI_CALIBRATION:
-        if (calibration_complete) { ui_state = UI_HOME; ui_selection = 5; }
+        if (calibration_complete) { ui_state = UI_HOME; ui_selection = 8; }
         else calibration_begin_face();
         break;
     case UI_CAPTURE_COMPLETE:
@@ -1640,7 +1686,8 @@ int main(void) {
                 pendulum_process_sample();
                 beam_process_sample();
                 printf("Accel raw: X=%d Y=%d Z=%d (0.061 mg/LSB)\n", x, y, z);
-                if (ui_state == UI_RAW_XYZ) show_raw_xyz();
+                if (ui_state == UI_ACCELERATION) show_acceleration();
+                else if (ui_state == UI_RAW_XYZ) show_raw_xyz();
                 else if (ui_state == UI_INCLINOMETER && time_reached(next_level_display)) {
                     show_inclinometer();
                     next_level_display = make_timeout_time_ms(LEVEL_DISPLAY_PERIOD_MS);
@@ -1654,7 +1701,7 @@ int main(void) {
                 else if (ui_state == UI_BEAM) show_beam();
             }
             next_imu_report = make_timeout_time_ms(
-                (ui_state == UI_RAW_XYZ || ui_state == UI_INCLINOMETER) ? 100 :
+                (ui_state == UI_ACCELERATION || ui_state == UI_RAW_XYZ || ui_state == UI_INCLINOMETER) ? 100 :
                 (ui_state == UI_FRICTION && friction_state == FRICTION_ARMED) ? 20 :
                 (ui_state == UI_PENDULUM && pendulum_state != PENDULUM_READY) ? 20 :
                 (ui_state == UI_BEAM && beam_state != BEAM_READY) ? 10 :
