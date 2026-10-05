@@ -77,7 +77,7 @@ function captureSeconds() { return capture ? capture.sampleCount / capture.sampl
 function clamp(value, minimum, maximum) { return Math.max(minimum, Math.min(maximum, value)); }
 function updateZoomControl() {
   const ready = !!capture;
-  ["#axesButton", "#magnitudeButton", "#showLabels", "#zoomInButton", "#zoomOutButton", "#panEarlierButton", "#panLaterButton", "#focusEventButton", "#verticalScale", "#fitVisibleButton", "#measureButton"].forEach(selector => { $(selector).disabled = !ready; });
+  ["#axesButton", "#magnitudeButton", "#showLabels", "#focusEventButton", "#verticalScale", "#fitVisibleButton", "#measureButton"].forEach(selector => { $(selector).disabled = !ready; });
   $("#axesButton").setAttribute("aria-pressed", String(chartMode === "axes"));
   $("#magnitudeButton").setAttribute("aria-pressed", String(chartMode === "magnitude"));
   $("#showLabels").setAttribute("aria-pressed", String(showLabels));
@@ -372,10 +372,6 @@ $("#sampleSelect").addEventListener("change", async event => { const filename = 
 $("#showLabels").addEventListener("click", event => { showLabels = !showLabels; event.currentTarget.setAttribute("aria-pressed", String(showLabels)); drawAll(); });
 $("#axesButton").addEventListener("click", () => setChartMode("axes"));
 $("#magnitudeButton").addEventListener("click", () => setChartMode("magnitude"));
-$("#zoomInButton").addEventListener("click", () => zoomAtCenter(0.6));
-$("#zoomOutButton").addEventListener("click", () => zoomAtCenter(1 / 0.6));
-$("#panEarlierButton").addEventListener("click", () => panView(-1));
-$("#panLaterButton").addEventListener("click", () => panView(1));
 $("#focusEventButton").addEventListener("click", focusEvent);
 $("#resetZoomButton").addEventListener("click", () => { resetZoom(); drawAll(); });
 function downloadFile(blob, filename) {
