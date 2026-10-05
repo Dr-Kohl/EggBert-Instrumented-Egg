@@ -4,6 +4,9 @@ const HEADER_BYTES = 32, MAGIC = [0x45, 0x47, 0x47, 0x31];
 const FLAG_TRIGGERED = 1, FLAG_FREEFALL = 2, FLAG_FIFO_OVERRUN = 4;
 let port, activeReader, capture, captureBytes, showLabels = true, orientationActive = false, orientationView;
 let viewStart = 0, viewSeconds = 0, drag, chartMode = "axes";
+let verticalScale = "auto", fittedDomains, fullDomains;
+let measuring = false, cursors = [null, null];
+const PLOT = { left: 58, right: 18, top: 18, bottom: 32 };
 const $ = selector => document.querySelector(selector);
 const setStatus = text => { $("#connectionStatus").textContent = text; };
 const setError = (text = "") => { $("#errorStatus").textContent = text; };
@@ -45,7 +48,11 @@ function detectFlight() {
 function displayCapture(bytes) {
   capture = parseEgg(bytes); captureBytes = bytes;
   chartMode = "axes";
-  resetZoom();
+  verticalScale = "auto"; fittedDomains = undefined;
+  fullDomains = { axes: domainFor([capture.x, capture.y, capture.z], 0, capture.sampleCount - 1, true), magnitude: domainFor([capture.magnitude], 0, capture.sampleCount - 1, false) };
+  $("#verticalScale").value = "auto";
+  measuring = false; cursors = [null, null]; drag = undefined;
+  resetZoom(); updateMeasurement();
   $("#summary").hidden = false; $("#charts").hidden = false;
   $("#sampleCount").textContent = `${capture.sampleCount.toLocaleString()} samples`;
   $("#sampleRate").textContent = `${capture.sampleRate.toLocaleString()} Hz`;
@@ -70,7 +77,7 @@ function captureSeconds() { return capture ? capture.sampleCount / capture.sampl
 function clamp(value, minimum, maximum) { return Math.max(minimum, Math.min(maximum, value)); }
 function updateZoomControl() {
   const ready = !!capture;
-  ["#axesButton", "#magnitudeButton", "#showLabels", "#zoomInButton", "#zoomOutButton", "#panEarlierButton", "#panLaterButton", "#focusEventButton"].forEach(selector => { $(selector).disabled = !ready; });
+  ["#axesButton", "#magnitudeButton", "#showLabels", "#zoomInButton", "#zoomOutButton", "#panEarlierButton", "#panLaterButton", "#focusEventButton", "#verticalScale", "#fitVisibleButton", "#measureButton"].forEach(selector => { $(selector).disabled = !ready; });
   $("#axesButton").setAttribute("aria-pressed", String(chartMode === "axes"));
   $("#magnitudeButton").setAttribute("aria-pressed", String(chartMode === "magnitude"));
   $("#showLabels").setAttribute("aria-pressed", String(showLabels));
@@ -100,21 +107,42 @@ function focusEvent() {
   setView(eventIndex / capture.sampleRate - 0.25, windowSeconds);
 }
 
+function niceLimit(maximum) {
+  const padded = Math.max(0.1, maximum * 1.08);
+  const power = 10 ** Math.floor(Math.log10(padded));
+  return [1, 2, 4, 5, 8, 10].find(step => step * power >= padded) * power;
+}
+function domainFor(series, start, end, symmetric) {
+  let maximum = 0;
+  for (const values of series) for (let i = start; i <= end; i += 1) maximum = Math.max(maximum, Math.abs(values[i]));
+  const limit = niceLimit(maximum);
+  return symmetric ? [-limit, limit] : [0, limit];
+}
+function visibleIndices() {
+  return [Math.max(0, Math.floor(viewStart * capture.sampleRate)), Math.min(capture.sampleCount - 1, Math.ceil((viewStart + viewSeconds) * capture.sampleRate))];
+}
+function currentDomain() {
+  if (verticalScale === "auto") return fullDomains[chartMode];
+  if (verticalScale === "fit") return fittedDomains[chartMode];
+  const limit = Number(verticalScale);
+  return chartMode === "axes" ? [-limit, limit] : [0, limit];
+}
+function fitVisibleData() {
+  if (!capture) return;
+  const [start, end] = visibleIndices();
+  fittedDomains = { axes: domainFor([capture.x, capture.y, capture.z], start, end, true), magnitude: domainFor([capture.magnitude], start, end, false) };
+  verticalScale = "fit"; $("#verticalScale").value = "fit"; drawAll();
+}
 function drawAll() {
   if (!capture) return;
-  const events = detectEvents();
-  if (chartMode === "axes") {
-    $("#chartTitle").textContent = "Acceleration";
-    $("#chartLegend").hidden = false;
-    $("#captureChart").setAttribute("aria-label", "Acceleration X, Y, and Z in g over time. Scroll to zoom and drag to pan.");
-    drawPlot($("#captureChart"), [capture.x, capture.y, capture.z], [-16, 16], ["#c33", "#17834d", "#2463c5"], "g", events);
-  } else {
-    $("#chartTitle").textContent = "Acceleration magnitude";
-    $("#chartLegend").hidden = true;
-    $("#captureChart").setAttribute("aria-label", "Acceleration magnitude in g over time. Scroll to zoom and drag to pan.");
-    const maximumMagnitude = capture.magnitude.reduce((maximum, value) => Math.max(maximum, value), 2);
-    drawPlot($("#captureChart"), [capture.magnitude], [0, Math.ceil(maximumMagnitude)], ["#6240a0"], "g", events);
-  }
+  const events = detectEvents(), domain = currentDomain();
+  $("#scaleReadout").textContent = `${domain[0]} to ${domain[1]} g`;
+  for (const option of $("#verticalScale").options) if (["2", "4", "8", "16"].includes(option.value)) option.textContent = chartMode === "axes" ? `±${option.value} g` : `0–${option.value} g`;
+  const axes = chartMode === "axes";
+  $("#chartTitle").textContent = axes ? "Acceleration" : "Acceleration magnitude";
+  $("#chartLegend").hidden = !axes;
+  $("#captureChart").setAttribute("aria-label", `${axes ? "Acceleration X, Y, and Z" : "Acceleration magnitude"} in g over time. Scroll to zoom. ${measuring ? "Click to place and drag measurement cursors." : "Drag to pan."}`);
+  drawPlot($("#captureChart"), axes ? [capture.x, capture.y, capture.z] : [capture.magnitude], domain, axes ? ["#c33", "#17834d", "#2463c5"] : ["#6240a0"], "g", events);
 }
 
 function detectEvents() {
@@ -153,10 +181,11 @@ function drawPlot(canvas, series, domain, colors, unit, events) {
   if (showLabels) events.filter(event => event.index >= startIndex && event.index <= endIndex).forEach((event, eventIndex) => { const x = xAt(event.index); ctx.strokeStyle = event.color; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, height - bottom); ctx.stroke(); ctx.setLineDash([]); ctx.save(); ctx.font = "bold 13px system-ui"; const labelWidth = ctx.measureText(event.label).width; const row = eventIndex % 3; const labelY = top + 15 + row * 17; const labelX = Math.min(width - labelWidth - 5, Math.max(left + 5, x - labelWidth / 2)); ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.fillRect(labelX - 3, labelY - 13, labelWidth + 6, 17); ctx.fillStyle = event.color; ctx.fillText(event.label, labelX, labelY); ctx.beginPath(); ctx.moveTo(x, labelY + 4); ctx.lineTo(x, top + 2); ctx.stroke(); ctx.restore(); });
   const visibleSamples = endIndex - startIndex + 1;
   const showSamples = visibleSamples <= plotWidth / 3;
+  ctx.save(); ctx.beginPath(); ctx.rect(left, top, plotWidth, plotHeight); ctx.clip();
   series.forEach((values, index) => {
     ctx.strokeStyle = colors[index]; ctx.lineWidth = 1.15; ctx.beginPath();
-    const stride = Math.max(1, Math.ceil(visibleSamples / plotWidth));
-    for (let i = startIndex; i <= endIndex; i += stride) { const x = xAt(i), y = top + plotHeight * (domain[1] - values[i]) / (domain[1] - domain[0]); if (i === startIndex) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
+    const indices = peakPreservingIndices(values, startIndex, endIndex, plotWidth);
+    for (const [position, i] of indices.entries()) { const x = xAt(i), y = top + plotHeight * (domain[1] - values[i]) / (domain[1] - domain[0]); if (position === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
     ctx.stroke();
     if (showSamples) {
       ctx.fillStyle = colors[index]; ctx.beginPath();
@@ -164,29 +193,90 @@ function drawPlot(canvas, series, domain, colors, unit, events) {
       ctx.fill();
     }
   });
+  ctx.restore();
+  drawMeasurementCursors(ctx, canvas);
 }
 
+// Retain extrema and endpoints in chronological order in every display bucket.
+// At close zoom the bucket size is one, so every original sample is drawn.
+function peakPreservingIndices(values, start, end, plotWidth) {
+  const stride = Math.max(1, Math.ceil((end - start + 1) / plotWidth)), indices = [];
+  for (let first = start; first <= end; first += stride) {
+    const last = Math.min(end, first + stride - 1);
+    let minimum = first, maximum = first;
+    for (let i = first + 1; i <= last; i += 1) { if (values[i] < values[minimum]) minimum = i; if (values[i] > values[maximum]) maximum = i; }
+    indices.push(...[...new Set([first, minimum, maximum, last])].sort((a, b) => a - b));
+  }
+  return indices;
+}
+function updateMeasurement(syncInputs = true) {
+  const ready = !!capture;
+  $("#measurementPanel").hidden = !measuring;
+  $("#measureButton").setAttribute("aria-pressed", String(measuring));
+  $("#captureChart").classList.toggle("measuring", measuring);
+  $("#clearMeasurementButton").disabled = !ready || cursors.every(index => index === null);
+  for (const [i, id] of ["#cursorAInput", "#cursorBInput"].entries()) {
+    $(id).disabled = !ready;
+    $(id).max = ready ? String((capture.sampleCount - 1) / capture.sampleRate) : "0";
+    if (syncInputs) $(id).value = cursors[i] === null ? "" : (cursors[i] / capture.sampleRate).toFixed(6);
+  }
+  $("#measurementReadout").textContent = cursors[0] === null ? "Choose point A." : cursors[1] === null ? "Choose point B." : `Δt: ${(Math.abs(cursors[1] - cursors[0]) / capture.sampleRate).toFixed(6)} s`;
+}
+function setCursor(which, seconds, syncInputs = true) {
+  if (!capture || !Number.isFinite(seconds)) return;
+  cursors[which] = clamp(Math.round(seconds * capture.sampleRate), 0, capture.sampleCount - 1);
+  updateMeasurement(syncInputs); drawAll();
+}
+function drawMeasurementCursors(ctx, canvas) {
+  if (!measuring) return;
+  cursors.forEach((index, i) => {
+    if (index === null) return;
+    const time = index / capture.sampleRate;
+    if (time < viewStart || time > viewStart + viewSeconds) return;
+    const x = PLOT.left + (canvas.width - PLOT.left - PLOT.right) * (time - viewStart) / viewSeconds;
+    ctx.save(); ctx.strokeStyle = ctx.fillStyle = i === 0 ? "#9940aa" : "#b25b00"; ctx.lineWidth = 2; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(x, PLOT.top); ctx.lineTo(x, canvas.height - PLOT.bottom); ctx.stroke();
+    ctx.setLineDash([]); ctx.font = "bold 16px system-ui"; ctx.fillText(i === 0 ? "A" : "B", Math.min(canvas.width - PLOT.right - 14, x + 5), canvas.height - PLOT.bottom - 8); ctx.restore();
+  });
+}
+function canvasPosition(canvas, event) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: (event.clientX - rect.left) * canvas.width / rect.width, y: (event.clientY - rect.top) * canvas.height / rect.height };
+}
+function timeAtPointer(canvas, event) {
+  const { x } = canvasPosition(canvas, event);
+  return viewStart + clamp((x - PLOT.left) / (canvas.width - PLOT.left - PLOT.right), 0, 1) * viewSeconds;
+}
 function addViewportControls(canvas) {
   canvas.addEventListener("wheel", event => {
     if (!capture) return;
     event.preventDefault();
-    const rect = canvas.getBoundingClientRect(), x = (event.clientX - rect.left) * canvas.width / rect.width;
-    const ratio = clamp((x - 58) / (canvas.width - 58 - 18), 0, 1);
+    const { x } = canvasPosition(canvas, event);
+    const ratio = clamp((x - PLOT.left) / (canvas.width - PLOT.left - PLOT.right), 0, 1);
     zoomAt(ratio, event.deltaY < 0 ? 0.8 : 1.25);
   }, { passive: false });
   canvas.addEventListener("pointerdown", event => {
     if (!capture || event.button !== 0) return;
-    drag = { canvas, x: event.clientX, start: viewStart };
+    const { x, y } = canvasPosition(canvas, event);
+    if (x < PLOT.left || x > canvas.width - PLOT.right || y < PLOT.top || y > canvas.height - PLOT.bottom) return;
+    if (measuring) {
+      const seconds = timeAtPointer(canvas, event);
+      const distances = cursors.map(index => index === null ? Infinity : Math.abs(index / capture.sampleRate - seconds));
+      const hitDistance = 12 * viewSeconds / (canvas.width - PLOT.left - PLOT.right);
+      let which = distances[0] <= distances[1] ? 0 : 1;
+      if (distances[which] > hitDistance && cursors.includes(null)) which = cursors.indexOf(null);
+      drag = { canvas, cursor: which }; setCursor(which, seconds);
+    } else drag = { canvas, x: event.clientX, start: viewStart };
     canvas.setPointerCapture(event.pointerId);
   });
   canvas.addEventListener("pointermove", event => {
     if (!drag || drag.canvas !== canvas) return;
+    if (drag.cursor !== undefined) { setCursor(drag.cursor, timeAtPointer(canvas, event)); return; }
     const rect = canvas.getBoundingClientRect(), pixels = (event.clientX - drag.x) * canvas.width / rect.width;
-    const seconds = pixels * viewSeconds / (canvas.width - 58 - 18);
-    setView(drag.start - seconds, viewSeconds);
+    setView(drag.start - pixels * viewSeconds / (canvas.width - PLOT.left - PLOT.right), viewSeconds);
   });
   const stopDragging = event => { if (drag && drag.canvas === canvas) { if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId); drag = undefined; } };
-  canvas.addEventListener("pointerup", stopDragging); canvas.addEventListener("pointercancel", stopDragging);
+  canvas.addEventListener("pointerup", stopDragging); canvas.addEventListener("pointercancel", stopDragging); canvas.addEventListener("lostpointercapture", () => { drag = undefined; });
 }
 
 async function connect() {
@@ -336,3 +426,12 @@ $("#saveButton").addEventListener("click", () => saveCaptureFile(new Blob([captu
 $("#saveCsvButton").addEventListener("click", () => exportCsv().catch(error => { if (error.name !== "AbortError") setError(`CSV export failed: ${error.message}`); }));
 addViewportControls($("#captureChart"));
 window.addEventListener("resize", drawAll);
+
+$("#verticalScale").addEventListener("change", event => { verticalScale = event.target.value; drawAll(); });
+$("#fitVisibleButton").addEventListener("click", fitVisibleData);
+$("#measureButton").addEventListener("click", () => { measuring = !measuring; drag = undefined; updateMeasurement(); drawAll(); });
+$("#clearMeasurementButton").addEventListener("click", () => { cursors = [null, null]; updateMeasurement(); drawAll(); });
+for (const [i, id] of ["#cursorAInput", "#cursorBInput"].entries()) {
+  $(id).addEventListener("input", event => { if (event.target.value === "") { cursors[i] = null; updateMeasurement(false); drawAll(); } else setCursor(i, Number(event.target.value), false); });
+  $(id).addEventListener("change", event => { if (event.target.value === "") { cursors[i] = null; updateMeasurement(); drawAll(); } else setCursor(i, Number(event.target.value)); });
+}
