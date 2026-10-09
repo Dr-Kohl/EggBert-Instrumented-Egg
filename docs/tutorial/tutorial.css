@@ -1,11 +1,13 @@
 .tutorial-nav{display:flex;flex-wrap:wrap;gap:.5rem;margin:1rem 0}
 .tutorial a.file-button{text-decoration:none;display:inline-block}
 .tutorial a:focus-visible{outline:3px solid #1769aa;outline-offset:3px}
-.tutorial-menu{list-style:none;padding:0;margin:1.25rem 0;max-width:38rem}
-.tutorial-menu li{border-bottom:1px solid color-mix(in srgb,CanvasText 22%,Canvas)}
-.tutorial-menu a{display:flex;flex-wrap:wrap;gap:.25rem 1rem;padding:.9rem .5rem;color:CanvasText;text-decoration:none}
-.tutorial-menu strong{min-width:8rem;color:#1769aa}
-.tutorial-menu a:hover{background:color-mix(in srgb,Canvas 94%,CanvasText)}
+.tutorial-menu{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1.25rem;list-style:none;padding:0;margin:1.25rem 0}
+.tutorial-menu li{min-width:0}
+.tutorial-menu a{display:block;padding:.75rem;border:1px solid color-mix(in srgb,CanvasText 22%,Canvas);border-radius:.4rem;color:CanvasText;text-decoration:none}
+.tutorial-menu strong{display:block;margin-bottom:.65rem;color:#1769aa}
+.tutorial-menu img{display:block;width:100%;height:auto;aspect-ratio:3/2;object-fit:contain;background:#fff}
+.tutorial-menu a:hover{border-color:#1769aa;background:color-mix(in srgb,Canvas 94%,CanvasText)}
+@media(max-width:600px){.tutorial-menu{grid-template-columns:1fr}}
 .menu-route{margin:1rem 0}
 .woodcut{margin:1rem 0;background:#fff}
 .woodcut img{display:block;width:100%;height:auto}
