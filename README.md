@@ -66,6 +66,39 @@ overwrite a completed one accidentally.
 button returns home. Each capture start also reads back IMU `CTRL8` and refuses
 to proceed unless it reports `0x03`, the expected +/-16 g capture range.
 
+### Gyroscope
+
+`Home -> GYRO` opens the **PEAK** view. Put EggBert down and hold it still
+while `HOLD STILL / ZEROING` is displayed. After a one-second settling delay,
+the firmware averages 120 fresh stationary samples to estimate gyro offset.
+Movement restarts that averaging window. This temporary zero is taken again
+each time GYRO is opened; the accelerometer calibration is separate.
+
+The screen shows signed X/Y/Z angular rates in **deg/s**. The top button switches
+**PEAK / LIVE**, the middle button clears all peaks, and the bottom button exits.
+After reset, `WAIT` is displayed for 750 ms so pressing the button does not
+become part of the next trial. Reset retains the stationary zero.
+
+Rotate about an axis, stop, and read its peak. Each peak retains the largest
+absolute speed with its original sign (for example, -500 replaces +200).
+Peaks continue tracking in both views until reset. `LIMIT` warns that a raw
+axis approached the nominal +/-2000 deg/s range; this warning is retained
+with the peaks until reset. One revolution per second is 360 deg/s.
+
+The gyro runs at 240 Hz only while this screen is open, with fresh-data polling
+separate from the 150 ms OLED refresh. It powers down on exit. OLED transfers
+and loop scheduling can skip sensor updates; this is an exploratory peak
+readout, not a lossless gyro recording. The existing accelerometer-only FIFO,
+`.egg` file format, and website downloads are unchanged. Gyro capture and
+orientation fusion are separate future additions.
+
+The pure session logic can be checked with a native C compiler:
+
+```text
+clang -std=c11 -Wall -Wextra -Werror -Iinclude tests/gyro_session_test.c -o gyro_session_test.exe
+gyro_session_test.exe
+```
+
 ### Gentle Catch game
 
 `Home -> Catch -> Gentle` starts a feedback-only catching challenge. EggBert

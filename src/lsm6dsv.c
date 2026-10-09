@@ -7,6 +7,11 @@
 #define LSM6DSV_WHO_AM_I       0x0Fu
 #define LSM6DSV_WHO_AM_I_VALUE 0x70u
 #define LSM6DSV_CTRL1          0x10u
+#define LSM6DSV_CTRL2          0x11u
+#define LSM6DSV_CTRL3          0x12u
+#define LSM6DSV_CTRL6          0x15u
+#define LSM6DSV_STATUS_REG     0x1Eu
+#define LSM6DSV_OUTX_L_G       0x22u
 #define LSM6DSV_CTRL8          0x17u
 #define LSM6DSV_OUTX_L_A       0x28u
 #define LSM6DSV_FIFO_CTRL1     0x07u
@@ -92,6 +97,30 @@ bool lsm6dsv_init(void) {
 
 bool lsm6dsv_read_accel(int16_t *x, int16_t *y, int16_t *z) {
     uint8_t tx[7] = { (uint8_t)(LSM6DSV_OUTX_L_A | 0x80u), 0, 0, 0, 0, 0, 0 };
+    uint8_t rx[sizeof tx] = {0};
+    select_imu(true);
+    int transferred = spi_write_read_blocking(IMU_SPI, tx, rx, sizeof tx);
+    select_imu(false);
+    if (transferred != sizeof tx) return false;
+    *x = (int16_t)((uint16_t)rx[1] | ((uint16_t)rx[2] << 8));
+    *y = (int16_t)((uint16_t)rx[3] | ((uint16_t)rx[4] << 8));
+    *z = (int16_t)((uint16_t)rx[5] | ((uint16_t)rx[6] << 8));
+    return true;
+}
+
+bool lsm6dsv_gyro_start(void) {
+    // BDU prevents mixed low/high bytes; IF_INC supports XYZ burst reads.
+    write_reg(LSM6DSV_CTRL3, read_reg(LSM6DSV_CTRL3) | 0x44u);
+    write_reg(LSM6DSV_CTRL6, 0x04u); // +/-2000 deg/s (70 mdps/count)
+    write_reg(LSM6DSV_CTRL2, 0x07u); // 240 Hz, high-performance mode
+    return read_reg(LSM6DSV_CTRL2) == 0x07u && read_reg(LSM6DSV_CTRL6) == 0x04u;
+}
+
+void lsm6dsv_gyro_stop(void) { write_reg(LSM6DSV_CTRL2, 0x00u); }
+
+bool lsm6dsv_read_gyro(int16_t *x, int16_t *y, int16_t *z) {
+    if (!(read_reg(LSM6DSV_STATUS_REG) & 0x02u)) return false;
+    uint8_t tx[7] = { (uint8_t)(LSM6DSV_OUTX_L_G | 0x80u), 0, 0, 0, 0, 0, 0 };
     uint8_t rx[sizeof tx] = {0};
     select_imu(true);
     int transferred = spi_write_read_blocking(IMU_SPI, tx, rx, sizeof tx);

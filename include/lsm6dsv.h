@@ -16,6 +16,12 @@ bool lsm6dsv_init(void);
 // Reads raw signed acceleration counts. At the configured +/-2 g scale: 0.061 mg/LSB.
 bool lsm6dsv_read_accel(int16_t *x, int16_t *y, int16_t *z);
 
+// On-demand gyro: 240 Hz, +/-2000 deg/s, 70 mdps/count. Never batched into
+// the accelerometer capture FIFO. read_gyro returns false without fresh data.
+bool lsm6dsv_gyro_start(void);
+void lsm6dsv_gyro_stop(void);
+bool lsm6dsv_read_gyro(int16_t *x, int16_t *y, int16_t *z);
+
 // Starts FIFO acquisition of accelerometer-only samples at 3.84 kHz and +/-16 g.
 // FIFO watermark and overrun are routed to IMU_INT1_PIN.
 bool lsm6dsv_fifo_start(void);

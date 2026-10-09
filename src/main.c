@@ -11,6 +11,7 @@
 #include "hardware/regs/addressmap.h"
 #include "hardware/sync.h"
 #include "lsm6dsv.h"
+#include "gyro_session.h"
 #include "pico/stdlib.h"
 #include "ssd1306.h"
 
@@ -186,6 +187,7 @@ typedef enum {
     UI_DROP_TEST,
     UI_CHALLENGES,
     UI_ACCELERATION,
+    UI_GYRO,
     UI_RAW_XYZ,
     UI_INCLINOMETER,
     UI_CALIBRATION,
@@ -200,6 +202,11 @@ typedef enum {
 
 static ui_state_t ui_state = UI_HOME;
 static unsigned ui_selection;
+static const unsigned home_menu_order[] = {0, 1, 2, 3, 9, 4, 5, 6, 7, 8};
+static gyro_session_t gyro_session;
+static bool gyro_peak_view = true;
+static bool gyro_ok;
+static absolute_time_t next_gyro_display;
 
 typedef enum {
     CAPTURE_IDLE,
@@ -350,16 +357,18 @@ static void ui_menu_item(uint8_t y, const char *text, bool selected) {
 
 static void show_home(void) {
     if (!oled_ok) return;
-    ui_begin(ui_selection >= 7 ? "HOME 2" : "HOME 1", "I");
-    if (ui_selection >= 7) {
+    bool second_page = ui_selection >= 6 && ui_selection <= 8;
+    ui_begin(second_page ? "HOME 2" : "HOME 1", "I");
+    if (second_page) {
+        ui_menu_item(25, "BEAM", ui_selection == 6);
         ui_menu_item(38, "RAW XYZ", ui_selection == 7);
         ui_menu_item(51, "CAL", ui_selection == 8);
     }
     else {
     ui_menu_item(25, "RECORD", ui_selection == 0); ui_menu_item(38, "CATCH", ui_selection == 1);
     ui_menu_item(51, "PENDULUM", ui_selection == 2); ui_menu_item(64, "ACCEL (g)", ui_selection == 3);
-    ui_menu_item(77, "LEVEL", ui_selection == 4); ui_menu_item(90, "FRICTION", ui_selection == 5);
-    ui_menu_item(103, "BEAM", ui_selection == 6); }
+    ui_menu_item(77, "GYRO", ui_selection == 9); ui_menu_item(90, "LEVEL", ui_selection == 4);
+    ui_menu_item(103, "FRICTION", ui_selection == 5); }
     ssd1306_ui_text(18, 116, "MID GO", true);
     ssd1306_show();
 }
@@ -398,6 +407,65 @@ static void show_acceleration(void) {
     ssd1306_ui_text(18, 82, text, true);
     ssd1306_ui_text(18, 112, "MID EXIT", true);
     ssd1306_show();
+}
+
+static void show_gyro(void) {
+    if (!oled_ok) return;
+    ui_begin("GYRO", "I");
+    ssd1306_ui_text(18, 24, gyro_peak_view ? "PEAK" : "LIVE", true);
+    ssd1306_ui_text(18, 38, "deg/s", true);
+    if (!gyro_ok) {
+        ssd1306_ui_text(18, 54, "IMU ERR", true);
+    } else if (gyro_session.phase == GYRO_SETTLING || gyro_session.phase == GYRO_ZEROING) {
+        ssd1306_ui_text(18, 54, "HOLD", true);
+        ssd1306_ui_text(18, 68, "STILL", true);
+        ssd1306_ui_text(18, 82, "ZEROING", true);
+    } else {
+        const int32_t *values = gyro_peak_view ? gyro_session.peak_mdps : gyro_session.live_mdps;
+        for (unsigned axis = 0; axis < 3; ++axis) {
+            int32_t mdps = values[axis];
+            unsigned speed = (unsigned)((gyro_abs(mdps) + 500) / 1000);
+            char text[12];
+            snprintf(text, sizeof text, "%c %c%u", "XYZ"[axis], mdps < 0 ? '-' : '+', speed);
+            ssd1306_ui_text(18, (uint8_t)(54 + axis * 14), text, true);
+        }
+        bool limit = gyro_peak_view ? gyro_session.peak_limit : gyro_session.live_limit;
+        if (gyro_session.phase == GYRO_RESET_WAIT) ssd1306_ui_text(18, 91, "WAIT", true);
+        else if (limit) ssd1306_ui_text(18, 91, "LIMIT", true);
+    }
+    ssd1306_ui_text(18, 100, "UP VIEW", true);
+    ssd1306_ui_text(18, 109, "MID RST", true);
+    ssd1306_ui_text(18, 118, "DN EXIT", true);
+    ssd1306_show();
+}
+
+static void gyro_begin(void) {
+    gyro_peak_view = true;
+    gyro_session_begin(&gyro_session, to_ms_since_boot(get_absolute_time()));
+    gyro_ok = lsm6dsv_gyro_start();
+    next_gyro_display = get_absolute_time();
+    printf("Gyro: %s (240 Hz, +/-2000 deg/s). Hold still for zeroing.\n", gyro_ok ? "OK" : "ERROR");
+}
+
+static void service_gyro(void) {
+    if (ui_state != UI_GYRO || capture_active) return;
+    if (gyro_ok) {
+        int16_t raw[3];
+        if (lsm6dsv_read_gyro(&raw[0], &raw[1], &raw[2]))
+            gyro_session_sample(&gyro_session, raw, to_ms_since_boot(get_absolute_time()));
+    }
+    if (time_reached(next_gyro_display)) {
+        show_gyro();
+        next_gyro_display = make_timeout_time_ms(150);
+    }
+}
+
+static unsigned home_step(bool down) {
+    unsigned count = sizeof home_menu_order / sizeof home_menu_order[0];
+    for (unsigned i = 0; i < count; ++i)
+        if (home_menu_order[i] == ui_selection)
+            return home_menu_order[(i + (down ? 1 : count - 1)) % count];
+    return 0;
 }
 
 static void format_tilt(char *text, size_t text_size, char axis, float degrees) {
@@ -1002,6 +1070,7 @@ static void show_ui(void) {
     case UI_DROP_TEST: show_drop_test_menu(); break;
     case UI_CHALLENGES: show_challenges_menu(); break;
     case UI_ACCELERATION: show_acceleration(); break;
+    case UI_GYRO: show_gyro(); break;
     case UI_RAW_XYZ: show_raw_xyz(); break;
     case UI_INCLINOMETER: show_inclinometer(); break;
     case UI_CALIBRATION: show_calibration(); break;
@@ -1485,6 +1554,19 @@ static void handle_button_press(unsigned button) {
         return;
     }
 
+    if (ui_state == UI_GYRO) {
+        if (button == 0) gyro_peak_view = !gyro_peak_view;
+        else if (button == 1 && gyro_ok)
+            gyro_session_reset(&gyro_session, to_ms_since_boot(get_absolute_time()));
+        else if (button == 2) {
+            lsm6dsv_gyro_stop();
+            ui_state = UI_HOME;
+            ui_selection = 9;
+        }
+        show_ui();
+        return;
+    }
+
     if (capture_state == CAPTURE_GENTLE_RESULT) {
         if (button == 1) exit_gentle_catch();
         return;
@@ -1548,14 +1630,16 @@ static void handle_button_press(unsigned button) {
     }
 
     if (button == 0) {
-        unsigned count = ui_state == UI_HOME ? 9u :
+        if (ui_state == UI_HOME) { ui_selection = home_step(false); show_ui(); return; }
+        unsigned count =
                          ((ui_state == UI_ACCELERATION || ui_state == UI_RAW_XYZ || ui_state == UI_INCLINOMETER || ui_state == UI_CALIBRATION) ? 1u : 2u);
         ui_selection = (ui_selection + count - 1u) % count;
         show_ui();
         return;
     }
     if (button == 2) {
-        unsigned count = ui_state == UI_HOME ? 9u :
+        if (ui_state == UI_HOME) { ui_selection = home_step(true); show_ui(); return; }
+        unsigned count =
                          ((ui_state == UI_ACCELERATION || ui_state == UI_RAW_XYZ || ui_state == UI_INCLINOMETER || ui_state == UI_CALIBRATION) ? 1u : 2u);
         ui_selection = (ui_selection + 1u) % count;
         show_ui();
@@ -1573,6 +1657,7 @@ static void handle_button_press(unsigned button) {
         else if (ui_selection == 5) { friction_reset_session(); ui_state = UI_FRICTION; ui_selection = 0; }
         else if (ui_selection == 6) { beam_state = BEAM_READY; ui_state = UI_BEAM; ui_selection = 0; }
         else if (ui_selection == 7) { ui_state = UI_RAW_XYZ; ui_selection = 0; }
+        else if (ui_selection == 9) { ui_state = UI_GYRO; ui_selection = 0; gyro_begin(); }
         else { calibration_reset_wizard(); ui_state = UI_CALIBRATION; ui_selection = 0; }
         break;
     case UI_RECORD:
@@ -1595,6 +1680,8 @@ static void handle_button_press(unsigned button) {
         ui_state = UI_HOME;
         ui_selection = 3;
         break;
+    case UI_GYRO:
+        break; // all gyro buttons are handled above
     case UI_RAW_XYZ:
         ui_state = UI_HOME;
         ui_selection = 7;
@@ -1653,6 +1740,7 @@ int main(void) {
     while (true) {
         handle_serial_command();
         service_capture();
+        service_gyro();
         if (!capture_active && absolute_time_diff_us(get_absolute_time(), next_power_sample) <= 0) {
             sample_power();
             next_power_sample = make_timeout_time_ms(500);
@@ -1707,6 +1795,6 @@ int main(void) {
                 (ui_state == UI_BEAM && beam_state != BEAM_READY) ? 10 :
                 (ui_state == UI_CALIBRATION && (calibration_collecting || calibration_armed)) ? 50 : 250);
         }
-        sleep_ms(capture_active ? 1 : 10);
+        sleep_ms(capture_active || ui_state == UI_GYRO ? 1 : 10);
     }
 }
