@@ -3,6 +3,7 @@
 const HEADER_BYTES = 32, MAGIC = [0x45, 0x47, 0x47, 0x31];
 const FLAG_TRIGGERED = 1, FLAG_FREEFALL = 2, FLAG_FIFO_OVERRUN = 4;
 let port, activeReader, capture, captureBytes, showLabels = true, orientationActive = false, orientationView;
+let orientationReference, orientationLatest, orientationFirstTime;
 let viewStart = 0, viewSeconds = 0, drag, chartMode = "axes";
 let verticalScale = "auto", fittedDomains, fullDomains;
 let measuring = false, cursors = [null, null];
@@ -288,10 +289,13 @@ async function connect() {
 async function disconnect() {
   orientationActive = false;
   if (activeReader) await activeReader.cancel();
-  if (port) await port.close();
-  port = undefined; activeReader = undefined;
-  $("#connectButton").textContent = "Connect EggBert"; $("#connectButton").disabled = false; $("#downloadButton").disabled = true; $("#orientationButton").disabled = true; $("#orientationStopButton").disabled = true; $("#orientation").hidden = true;
-  setStatus("Device disconnected.");
+  try { if (port) await port.close(); }
+  finally {
+    port = undefined; activeReader = undefined;
+    $("#orientationRecenterButton").disabled = true;
+    $("#connectButton").textContent = "Connect EggBert"; $("#connectButton").disabled = false; $("#downloadButton").disabled = true; $("#orientationButton").disabled = true; $("#orientationStopButton").disabled = true; $("#orientation").hidden = true;
+    setStatus("Device disconnected.");
+  }
 }
 
 async function downloadCapture() {
@@ -346,27 +350,80 @@ function makeOrientationView() {
   caseFrame.rotation.set(Math.PI, 0, 0); motionFrame.add(caseFrame); scene.add(motionFrame);
   Promise.all([loadStl("models/eggbert-bottom.stl", 0x55514a), loadStl("models/eggbert-top.stl", 0xd9d0b6)]).then(parts => parts.forEach(part => caseFrame.add(part))).catch(error => { $("#orientationStatus").textContent = error.message; });
   renderer.domElement.addEventListener("wheel", event => { camera.position.multiplyScalar(event.deltaY > 0 ? 1.08 : .92); camera.position.clampLength(4, 10); camera.lookAt(0, 0, 0); event.preventDefault(); }, { passive: false });
-  const render = () => { const width = host.clientWidth, height = host.clientHeight; if (renderer.domElement.width !== Math.round(width * renderer.getPixelRatio()) || renderer.domElement.height !== Math.round(height * renderer.getPixelRatio())) { renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix(); } renderer.render(scene, camera); requestAnimationFrame(render); }; render();
-  orientationView = { motionFrame }; return orientationView;
+  const target = new THREE.Quaternion(); let previousFrame;
+  const render = time => { const width = host.clientWidth, height = host.clientHeight; if (width && height) { if (renderer.domElement.width !== Math.round(width * renderer.getPixelRatio()) || renderer.domElement.height !== Math.round(height * renderer.getPixelRatio())) { renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix(); } const dt = previousFrame === undefined ? 0 : Math.min((time - previousFrame) / 1000, .1); motionFrame.quaternion.slerp(target, 1 - Math.exp(-dt / .045)); renderer.render(scene, camera); } previousFrame = time; requestAnimationFrame(render); }; requestAnimationFrame(render);
+  orientationView = { motionFrame, target }; return orientationView;
+}
+async function sendOrientationCommand(command) {
+  const writer = port.writable.getWriter();
+  try { await writer.write(new TextEncoder().encode(command + "\n")); }
+  finally { writer.releaseLock(); }
+}
+function recenterOrientation() {
+  if (!orientationActive || !orientationLatest) return;
+  orientationReference = orientationLatest.slice();
+  orientationView.target.identity();
+  orientationView.motionFrame.quaternion.copy(orientationView.target);
+  $("#orientationStatus").textContent = "Recentered · gyro + gravity tracking";
 }
 async function setOrientation(on) {
   if (!port) return;
   if (on) makeOrientationView();
-  const writer = port.writable.getWriter(); await writer.write(new TextEncoder().encode(`orientation ${on ? "on" : "off"}\n`)); writer.releaseLock();
+  await sendOrientationCommand(on ? "orientation fused" : "orientation off");
   orientationActive = on; $("#orientationButton").disabled = on; $("#orientationStopButton").disabled = !on; $("#downloadButton").disabled = on;
+  $("#orientationRecenterButton").disabled = true;
   if (!on) { $("#orientationStatus").textContent = "Stopping and releasing EggBert…"; if (activeReader) await activeReader.cancel(); else await disconnect(); return; }
+  orientationReference = orientationLatest = orientationFirstTime = undefined;
+  orientationView.target.identity();
+  orientationView.motionFrame.quaternion.copy(orientationView.target);
+  $("#orientationStatus").textContent = "Hold still in the home pose while orientation starts…";
   const reader = port.readable.getReader(); activeReader = reader; let buffer = "", decoder = new TextDecoder();
+  let watchdog, timedOut = false, legacy = false;
+  const keepAlive = () => { clearTimeout(watchdog); watchdog = setTimeout(() => { timedOut = true; reader.cancel().catch(() => {}); }, 2500); };
+  keepAlive();
   try {
     while (orientationActive) {
-      const result = await reader.read(); if (result.done) break; buffer += decoder.decode(result.value, { stream: true }); const lines = buffer.split("\n"); buffer = lines.pop();
-      for (const line of lines) { const match = /^O,(-?\d+),(-?\d+),(-?\d+)$/.exec(line.trim()); if (!match) continue; const x = +match[1], y = +match[2], z = +match[3], pitch = Math.atan2(x, Math.hypot(y, z)) * 180 / Math.PI, roll = Math.atan2(z, Math.hypot(x, y)) * 180 / Math.PI; orientationView.motionFrame.rotation.set(roll * Math.PI / 180, 0, -pitch * Math.PI / 180); $("#orientationStatus").textContent = `Pitch ${pitch.toFixed(1)}° · Roll ${roll.toFixed(1)}°`; }
+      const result = await reader.read();
+      if (result.done) { if (orientationActive) throw new Error(timedOut ? "Orientation timed out. Return EggBert to HOME and reconnect." : "EggBert disconnected during orientation."); break; }
+      buffer += decoder.decode(result.value, { stream: true }); const lines = buffer.split("\n"); buffer = lines.pop();
+      if (buffer.length > 4096) throw new Error("Invalid orientation stream. Reconnect EggBert.");
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (line.startsWith("ERROR:") || line.startsWith("ORIENTATION STOPPED")) throw new Error(line.replace(/^ERROR:\s*/, ""));
+        // Older command buffers truncate "orientation fused" to "orientation fus".
+        if (line.startsWith("Unknown command: orientation ") && !legacy) { legacy = true; await sendOrientationCommand("orientation on"); keepAlive(); continue; }
+        const sample = EggOrientation.parse(line);
+        if (sample) {
+          keepAlive(); orientationLatest = sample.q;
+          if (orientationFirstTime === undefined) orientationFirstTime = sample.time;
+          // Let the sensor initialize before taking the session reference.
+          if (!orientationReference && ((sample.time - orientationFirstTime) >>> 0) >= 600) {
+            orientationReference = sample.q.slice(); $("#orientationRecenterButton").disabled = false;
+          }
+          if (orientationReference) {
+            orientationView.target.set(...EggOrientation.relative(orientationReference, sample.q));
+            $("#orientationStatus").textContent = "Gyro + gravity · 60 Hz · full 3D rotation";
+          }
+          continue;
+        }
+        const match = /^O,(-?\d+),(-?\d+),(-?\d+)$/.exec(line);
+        if (legacy && match) {
+          keepAlive(); const x = +match[1], y = +match[2], z = +match[3];
+          const pitch = Math.atan2(x, Math.hypot(y,z)), roll = Math.atan2(z, Math.hypot(x,y));
+          orientationView.target.setFromEuler(new THREE.Euler(roll,0,-pitch));
+          $("#orientationStatus").textContent = "Tilt only · update EggBert firmware for gyro rotation";
+        }
+      }
     }
   } finally {
+    clearTimeout(watchdog);
     if (activeReader === reader) activeReader = undefined; reader.releaseLock();
-    if (!orientationActive && port) await disconnect(); else $("#downloadButton").disabled = false;
+    // Also restore the device after a rejected mode, unplug, or sensor failure.
+    if (port) { try { await sendOrientationCommand("orientation off"); } catch (_) {} await disconnect(); }
   }
 }
 $("#orientationButton").addEventListener("click",()=>setOrientation(true).catch(e=>setError(e.message)));$("#orientationStopButton").addEventListener("click",()=>setOrientation(false).catch(e=>setError(e.message)));
+$("#orientationRecenterButton").addEventListener("click",recenterOrientation);
 $("#fileInput").addEventListener("change", async event => { try { setError(""); displayCapture(new Uint8Array(await event.target.files[0].arrayBuffer())); setStatus("Capture file opened."); } catch (error) { setError(error.message); } event.target.value = ""; });
 $("#sampleSelect").addEventListener("change", async event => { const filename = event.target.value; if (!filename) return; try { setError(""); setStatus("Loading sample capture…"); const response = await fetch("sample-data/" + filename); if (!response.ok) throw new Error("Could not load sample capture (" + response.status + ")."); displayCapture(new Uint8Array(await response.arrayBuffer())); setStatus("Sample capture opened."); } catch (error) { setError(error.message); setStatus("Sample did not load."); } event.target.value = ""; });
 $("#showLabels").addEventListener("click", event => { showLabels = !showLabels; event.currentTarget.setAttribute("aria-pressed", String(showLabels)); drawAll(); });

@@ -13,6 +13,7 @@
 #include "lsm6dsv.h"
 #include "gyro_session.h"
 #include "pico/stdlib.h"
+#include "pico/stdio_usb.h"
 #include "ssd1306.h"
 
 static const uint LEDS[] = {LED_GREEN_PIN, LED_YELLOW_PIN, LED_RED_PIN};
@@ -103,6 +104,8 @@ static int16_t live_accel_x;
 static int16_t live_accel_y;
 static int16_t live_accel_z;
 static bool orientation_stream;
+static bool orientation_fused;
+static uint32_t orientation_last_ms;
 static float level_accel_x;
 static float level_accel_y;
 static float level_accel_z;
@@ -1513,8 +1516,32 @@ static void service_capture(void) {
     }
 }
 
+static void stop_orientation(void) {
+    orientation_stream = false;
+    orientation_fused = false;
+    lsm6dsv_orientation_stop();
+}
+
+static void service_orientation(void) {
+    if (!orientation_fused) return;
+    if (!stdio_usb_connected()) { stop_orientation(); return; }
+    lsm6dsv_quaternion_t q;
+    bool overrun = false;
+    uint32_t now = to_ms_since_boot(get_absolute_time());
+    bool fresh = lsm6dsv_orientation_read(&q, &overrun);
+    if (overrun || now - orientation_last_ms > 1500u) {
+        stop_orientation();
+        printf("ERROR: orientation %s\n", overrun ? "FIFO overflow" : "sensor timeout");
+    } else if (fresh) {
+        orientation_last_ms = now;
+        printf("Q1,%lu,%ld,%ld,%ld,%ld\n", (unsigned long)now,
+            (long)lroundf(q.w * 1000000.0f), (long)lroundf(q.x * 1000000.0f),
+            (long)lroundf(q.y * 1000000.0f), (long)lroundf(q.z * 1000000.0f));
+    }
+}
+
 static void handle_serial_command(void) {
-    static char command[16];
+    static char command[48];
     static size_t length;
     int character;
     while ((character = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
@@ -1528,16 +1555,27 @@ static void handle_serial_command(void) {
             } else if (strcmp(command, "status") == 0) {
                 print_capture_status();
             } else if (strcmp(command, "download") == 0) {
+                stop_orientation();
                 download_capture();
+            } else if (strcmp(command, "orientation fused") == 0) {
+                if (capture_active || ui_state != UI_HOME) {
+                    printf("ERROR: return EggBert to HOME before orientation.\n");
+                } else {
+                    stop_orientation();
+                    orientation_fused = lsm6dsv_orientation_start();
+                    orientation_last_ms = to_ms_since_boot(get_absolute_time());
+                    printf(orientation_fused ? "ORIENTATION Q1 60HZ SCALE 1000000\n" : "ERROR: fusion setup failed\n");
+                }
             } else if (strcmp(command, "orientation on") == 0) {
-                orientation_stream = true;
-                printf("ORIENTATION +Y HOME\n");
+                stop_orientation();
+                if (!capture_active) { orientation_stream = true; printf("ORIENTATION +Y HOME\n"); }
+                else printf("ERROR: capture is active.\n");
             } else if (strcmp(command, "orientation off") == 0) {
-                orientation_stream = false;
+                stop_orientation();
             } else if (strcmp(command, "clear") == 0) {
                 printf("ERROR: erase captures using the EggBert menu.\n");
             } else if (strcmp(command, "help") == 0) {
-                printf("Commands: status, download, help. Capture control uses the EggBert menu.\n");
+                printf("Commands: status, download, orientation fused/on/off, help. Capture control uses the EggBert menu.\n");
             } else {
                 printf("Unknown command: %s (type help)\n", command);
             }
@@ -1549,6 +1587,7 @@ static void handle_serial_command(void) {
 }
 
 static void handle_button_press(unsigned button) {
+    if (orientation_fused) { stop_orientation(); printf("ORIENTATION STOPPED: device menu\n"); }
     if (capture_active) {
         if (ui_state == UI_GENTLE_CATCH && button == 1) exit_gentle_catch();
         return;
@@ -1741,6 +1780,7 @@ int main(void) {
         handle_serial_command();
         service_capture();
         service_gyro();
+        service_orientation();
         if (!capture_active && absolute_time_diff_us(get_absolute_time(), next_power_sample) <= 0) {
             sample_power();
             next_power_sample = make_timeout_time_ms(500);
@@ -1761,7 +1801,7 @@ int main(void) {
                 if (new_presses & (1u << i)) handle_button_press(i);
         }
         update_status_leds(imu_ok);
-        if (imu_ok && !capture_active && absolute_time_diff_us(get_absolute_time(), next_imu_report) <= 0) {
+        if (imu_ok && !capture_active && !orientation_fused && absolute_time_diff_us(get_absolute_time(), next_imu_report) <= 0) {
             int16_t x, y, z;
             if (lsm6dsv_read_accel(&x, &y, &z)) {
                 calibration_process_raw(x, y, z);
@@ -1795,6 +1835,6 @@ int main(void) {
                 (ui_state == UI_BEAM && beam_state != BEAM_READY) ? 10 :
                 (ui_state == UI_CALIBRATION && (calibration_collecting || calibration_armed)) ? 50 : 250);
         }
-        sleep_ms(capture_active || ui_state == UI_GYRO ? 1 : 10);
+        sleep_ms(capture_active || orientation_fused || ui_state == UI_GYRO ? 1 : 10);
     }
 }

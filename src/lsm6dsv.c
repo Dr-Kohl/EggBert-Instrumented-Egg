@@ -3,6 +3,8 @@
 #include "board.h"
 #include "hardware/gpio.h"
 #include "hardware/spi.h"
+#include <math.h>
+#include "pico/stdlib.h"
 
 #define LSM6DSV_WHO_AM_I       0x0Fu
 #define LSM6DSV_WHO_AM_I_VALUE 0x70u
@@ -28,6 +30,10 @@
 #define FIFO_STATUS_OVERRUN_LATCHED     0x08u
 
 static volatile bool fifo_irq_pending;
+static bool orientation_running;
+static const uint8_t orientation_regs[] = {0x07, 0x08, 0x09, 0x0A, 0x0D, 0x10, 0x11, 0x12, 0x15, 0x17};
+static uint8_t orientation_saved[sizeof orientation_regs];
+static uint8_t saved_emb_enable, saved_emb_fifo, saved_sflp_odr;
 
 static void select_imu(bool selected) { gpio_put(IMU_CS_PIN, !selected); }
 
@@ -68,6 +74,9 @@ static bool read_fifo_sample(lsm6dsv_accel_sample_t *sample) {
     int transferred = spi_write_read_blocking(IMU_SPI, tx, rx, sizeof tx);
     select_imu(false);
     if (transferred != sizeof tx) return false;
+
+    // Capture must never interpret a fusion or gyro record as acceleration.
+    if ((rx[1] >> 3) != 0x02u) return false;
 
     sample->x = (int16_t)((uint16_t)rx[2] | ((uint16_t)rx[3] << 8));
     sample->y = (int16_t)((uint16_t)rx[4] | ((uint16_t)rx[5] << 8));
@@ -133,6 +142,7 @@ bool lsm6dsv_read_gyro(int16_t *x, int16_t *y, int16_t *z) {
 }
 
 bool lsm6dsv_fifo_start(void) {
+    lsm6dsv_orientation_stop();
     // Reset the FIFO, then configure it before enabling the high-rate sensor.
     write_reg(LSM6DSV_FIFO_CTRL4, 0x00u); // bypass mode
     write_reg(LSM6DSV_INT1_CTRL, 0x00u);
@@ -173,4 +183,85 @@ size_t lsm6dsv_fifo_read(lsm6dsv_accel_sample_t *samples, size_t max_samples,
 
 bool lsm6dsv_fifo_irq_pending(void) {
     return fifo_irq_pending;
+}
+
+// Register addresses/bits follow ST's lsm6dsv-pid driver (exact LSM6DSV).
+// Embedded function registers require FUNC_CFG_ACCESS bit 7; always return
+// to the main bank before servicing any other IMU operation.
+bool lsm6dsv_orientation_start(void) {
+    if (orientation_running) return true;
+    for (size_t i = 0; i < sizeof orientation_regs; ++i)
+        orientation_saved[i] = read_reg(orientation_regs[i]);
+    orientation_running = true;
+    write_reg(LSM6DSV_FIFO_CTRL4, 0);
+    write_reg(LSM6DSV_INT1_CTRL, 0);
+    write_reg(LSM6DSV_FIFO_CTRL1, 1);
+    write_reg(LSM6DSV_FIFO_CTRL2, 0);
+    write_reg(LSM6DSV_FIFO_CTRL3, 0); // no raw acceleration/gyro batching
+    write_reg(LSM6DSV_CTRL3, read_reg(LSM6DSV_CTRL3) | 0x44u);
+    write_reg(LSM6DSV_CTRL8, 0x01u); // +/-4 g
+    write_reg(LSM6DSV_CTRL6, 0x04u); // +/-2000 dps
+    write_reg(LSM6DSV_CTRL1, 0x05u); // 60 Hz
+    write_reg(LSM6DSV_CTRL2, 0x05u);
+    write_reg(0x01u, 0x80u);
+    saved_emb_enable = read_reg(0x04u);
+    saved_emb_fifo = read_reg(0x44u);
+    saved_sflp_odr = read_reg(0x5Eu);
+    write_reg(0x5Eu, (saved_sflp_odr & ~0x38u) | 0x10u); // SFLP 60 Hz
+    write_reg(0x44u, (saved_emb_fifo & ~0x32u) | 0x02u); // quaternion only
+    write_reg(0x04u, saved_emb_enable | 0x02u);
+    write_reg(0x66u, 0x02u); // initialize game rotation for this session
+    bool configured = (read_reg(0x04u) & 0x02u) &&
+        (read_reg(0x44u) & 0x32u) == 0x02u && (read_reg(0x5Eu) & 0x38u) == 0x10u;
+    write_reg(0x01u, 0);
+    configured = configured && read_reg(LSM6DSV_CTRL1) == 5 && read_reg(LSM6DSV_CTRL2) == 5;
+    if (!configured) { lsm6dsv_orientation_stop(); return false; }
+    write_reg(LSM6DSV_FIFO_CTRL4, 0x06u);
+    return true;
+}
+
+void lsm6dsv_orientation_stop(void) {
+    if (!orientation_running) return;
+    write_reg(LSM6DSV_FIFO_CTRL4, 0);
+    write_reg(0x01u, 0x80u);
+    write_reg(0x04u, saved_emb_enable);
+    write_reg(0x44u, saved_emb_fifo);
+    write_reg(0x5Eu, saved_sflp_odr);
+    write_reg(0x01u, 0);
+    for (size_t i = 0; i < sizeof orientation_regs; ++i)
+        write_reg(orientation_regs[i], orientation_saved[i]);
+    orientation_running = false;
+    // Allow a fresh +/-2 g sample before live lab/calibration consumers resume.
+    sleep_ms(20);
+}
+
+static float fifo_half(uint8_t low, uint8_t high) {
+    uint16_t bits = (uint16_t)low | ((uint16_t)high << 8);
+    unsigned exponent = (bits >> 10) & 31u, fraction = bits & 1023u;
+    float value = exponent == 31u ? NAN : exponent == 0u ?
+        ldexpf((float)fraction, -24) : ldexpf((float)(1024u + fraction), (int)exponent - 25);
+    return bits & 0x8000u ? -value : value;
+}
+
+bool lsm6dsv_orientation_read(lsm6dsv_quaternion_t *q, bool *overrun) {
+    if (!orientation_running || !q) return false;
+    uint16_t available = fifo_level(overrun);
+    bool found = false;
+    // Drain a bounded snapshot and retain the newest rotation, avoiding backlog.
+    for (uint16_t i = 0; i < available; ++i) {
+        uint8_t tx[8] = {LSM6DSV_FIFO_DATA_TAG | 0x80u}, rx[8] = {0};
+        select_imu(true);
+        int transferred = spi_write_read_blocking(IMU_SPI, tx, rx, sizeof tx);
+        select_imu(false);
+        if (transferred != sizeof tx) break;
+        if ((rx[1] >> 3) != 0x13u) continue;
+        float x = fifo_half(rx[2], rx[3]), y = fifo_half(rx[4], rx[5]), z = fifo_half(rx[6], rx[7]);
+        float norm = x*x + y*y + z*z;
+        if (!isfinite(norm) || norm > 1.01f) continue;
+        // Half precision can round a unit vector slightly above one (ST example).
+        if (norm > 1.0f) { float scale = 1.0f / sqrtf(norm); x *= scale; y *= scale; z *= scale; norm = 1.0f; }
+        *q = (lsm6dsv_quaternion_t){sqrtf(1.0f - norm), x, y, z};
+        found = true;
+    }
+    return found;
 }

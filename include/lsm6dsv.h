@@ -22,6 +22,13 @@ bool lsm6dsv_gyro_start(void);
 void lsm6dsv_gyro_stop(void);
 bool lsm6dsv_read_gyro(int16_t *x, int16_t *y, int16_t *z);
 
+typedef struct { float w, x, y, z; } lsm6dsv_quaternion_t;
+// Exclusive FIFO mode: 60 Hz on-chip game rotation, +/-4 g and +/-2000 dps.
+// Stop restores the preceding live sensor configuration. Never use during capture.
+bool lsm6dsv_orientation_start(void);
+void lsm6dsv_orientation_stop(void);
+bool lsm6dsv_orientation_read(lsm6dsv_quaternion_t *quaternion, bool *overrun);
+
 // Starts FIFO acquisition of accelerometer-only samples at 3.84 kHz and +/-16 g.
 // FIFO watermark and overrun are routed to IMU_INT1_PIN.
 bool lsm6dsv_fifo_start(void);
