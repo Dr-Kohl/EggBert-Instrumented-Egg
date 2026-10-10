@@ -351,7 +351,7 @@ function makeOrientationView() {
   // In the +Y-down home pose: buttons are down, screen faces the viewer, USB is left.
   caseFrame.rotation.set(Math.PI, 0, 0); motionFrame.add(caseFrame); scene.add(motionFrame);
   // CAD aperture: X [-12.53039,14.66961], Y [-13.69399,1.76601], Z 10..12 mm.
-  // The portrait OLED's top points toward USB (+X); its right points toward -Y.
+  // Orient the HOME artwork with its plug icon furthest from the button holes.
   // Keep the screen inside the lip, attached to the same case transform.
   const screenTexture = new THREE.TextureLoader().load("models/eggbert-home-screen.png");
   screenTexture.colorSpace = THREE.SRGBColorSpace;
@@ -363,7 +363,7 @@ function makeOrientationView() {
   caseFrame.add(displayBacking);
   const screen = new THREE.Mesh(new THREE.PlaneGeometry(14.8 * .045, 26.5 * .045),
     new THREE.MeshBasicMaterial({ map: screenTexture, toneMapped: false }));
-  screen.rotation.z = -Math.PI / 2;
+  screen.rotation.z = Math.PI / 2;
   screen.position.set(1.06961 * .045, -5.96399 * .045, 11.8 * .045);
   caseFrame.add(screen);
   Promise.all([loadStl("models/eggbert-bottom.stl", 0x55514a), loadStl("models/eggbert-top.stl", 0xd9d0b6)]).then(parts => parts.forEach(part => caseFrame.add(part))).catch(error => { $("#orientationStatus").textContent = error.message; });
