@@ -162,11 +162,14 @@ post-event sample count, flags, and a payload CRC-32.
 The GitHub Pages viewer also has a live 3D orientation panel. It uses the
 actual enclosure meshes in `docs/models/eggbert-bottom.stl` and
 `docs/models/eggbert-top.stl`; do not replace them with a generic box model.
-After Web Serial connects, it sends `orientation on` and receives lines in the
-form `O,x,y,z`. **Stop** sends `orientation off` and releases the USB serial
+After Web Serial connects, Start orientation sends `orientation fused` and
+receives 60 Hz `Q2` records with quaternion, acceleration, and gyro data.
+Start resting in any position; the viewer waits for stable gravity readings,
+identifies the resting side, and displays actual tilt. **Recenter heading**
+resets only the viewing direction. **Stop** sends `orientation off` and releases the USB serial
 port, so a later session starts with a fresh Connect action.
 
-CAD and sensor axes intentionally agree:
+CAD axes (sensor X/Y have the opposite directions; Z agrees):
 
 | Positive axis | Physical direction |
 |---|---|
@@ -174,10 +177,11 @@ CAD and sensor axes intentionally agree:
 | +Y | button side (under the buttons) |
 | +Z | out through the screen face |
 
-The viewer's home pose is +Y down: buttons down, screen facing the viewer, and
-USB visually left. The current viewer uses accelerometer pitch and roll only;
-yaw is deliberately fixed. A future gyro/sensor-fusion addition may improve
-motion and yaw behavior, but it must preserve this CAD-to-sensor mapping.
+Physical checks confirmed sensor +Z with the screen up and sensor +Y with
+buttons down. The CAD-to-sensor mapping requires a Z=180-degree rotation.
+The viewer applies this mapping and converts the sensor's Z-up world to
+Three.js Y-up. Heading is relative and may drift without a magnetometer.
+Older firmware retains a tilt-only fallback. See `ORIENTATION_PROTOCOL.md`.
 
 ## Deliberate exclusions
 

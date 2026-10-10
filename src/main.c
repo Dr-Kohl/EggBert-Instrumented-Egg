@@ -1534,9 +1534,11 @@ static void service_orientation(void) {
         printf("ERROR: orientation %s\n", overrun ? "FIFO overflow" : "sensor timeout");
     } else if (fresh) {
         orientation_last_ms = now;
-        printf("Q1,%lu,%ld,%ld,%ld,%ld\n", (unsigned long)now,
+        int16_t ax, ay, az, gx, gy, gz;
+        if (!lsm6dsv_read_accel(&ax, &ay, &az) || !lsm6dsv_read_gyro(&gx, &gy, &gz)) return;
+        printf("Q2,%lu,%ld,%ld,%ld,%ld,%d,%d,%d,%d,%d,%d\n", (unsigned long)now,
             (long)lroundf(q.w * 1000000.0f), (long)lroundf(q.x * 1000000.0f),
-            (long)lroundf(q.y * 1000000.0f), (long)lroundf(q.z * 1000000.0f));
+            (long)lroundf(q.y * 1000000.0f), (long)lroundf(q.z * 1000000.0f), ax, ay, az, gx, gy, gz);
     }
 }
 
@@ -1564,7 +1566,7 @@ static void handle_serial_command(void) {
                     stop_orientation();
                     orientation_fused = lsm6dsv_orientation_start();
                     orientation_last_ms = to_ms_since_boot(get_absolute_time());
-                    printf(orientation_fused ? "ORIENTATION Q1 60HZ SCALE 1000000\n" : "ERROR: fusion setup failed\n");
+                    printf(orientation_fused ? "ORIENTATION Q2 60HZ SCALE 1000000 ACCEL 8192 GYRO 70MDPS\n" : "ERROR: fusion setup failed\n");
                 }
             } else if (strcmp(command, "orientation on") == 0) {
                 stop_orientation();

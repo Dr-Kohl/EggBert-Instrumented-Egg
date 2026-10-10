@@ -9,7 +9,7 @@ SFLP (sensor fusion low power) game-rotation quaternion for smoother motion.
 
 ## Established coordinate convention
 
-CAD and sensor coordinates intentionally match:
+This original plan assumed CAD and sensor coordinates matched. Physical checks on 2026-10-09 found a required 180-degree rotation about Z between them. The table below describes CAD coordinates; sensor X/Y run in the opposite directions. See ORIENTATION_PROTOCOL.md for the implemented mapping and automatic resting-pose initialization.
 
 | Positive axis | Physical direction |
 |---|---|

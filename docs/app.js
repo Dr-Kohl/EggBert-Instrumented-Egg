@@ -3,7 +3,7 @@
 const HEADER_BYTES = 32, MAGIC = [0x45, 0x47, 0x47, 0x31];
 const FLAG_TRIGGERED = 1, FLAG_FREEFALL = 2, FLAG_FIFO_OVERRUN = 4;
 let port, activeReader, capture, captureBytes, showLabels = true, orientationActive = false, orientationView;
-let orientationReference, orientationLatest, orientationFirstTime;
+let orientationHeading = 0, orientationLatest, orientationReady = false;
 let viewStart = 0, viewSeconds = 0, drag, chartMode = "axes";
 let verticalScale = "auto", fittedDomains, fullDomains;
 let measuring = false, cursors = [null, null];
@@ -284,6 +284,8 @@ async function connect() {
   if (!("serial" in navigator)) throw new Error("Web Serial is unavailable. Use Chrome or Edge over HTTPS, or open a saved .egg file.");
   port = await navigator.serial.requestPort(); await port.open({ baudRate: 115200, bufferSize: 65536 });
   $("#connectButton").textContent = "EggBert connected"; $("#connectButton").disabled = true; $("#downloadButton").disabled = false; $("#orientation").hidden = false; $("#orientationButton").disabled = false; setStatus("EggBert connected. Complete the test using EggBert's buttons, then download it here.");
+  $("#orientationStatus").textContent = "Choose Start orientation with EggBert resting in any position.";
+  $("#orientationPose").textContent = "Resting side will be detected automatically.";
 }
 
 async function disconnect() {
@@ -360,25 +362,29 @@ async function sendOrientationCommand(command) {
   finally { writer.releaseLock(); }
 }
 function recenterOrientation() {
-  if (!orientationActive || !orientationLatest) return;
-  orientationReference = orientationLatest.slice();
-  orientationView.target.identity();
+  if (!orientationActive || !orientationLatest || !orientationReady) return;
+  orientationHeading = EggOrientation.heading(orientationLatest);
+  orientationView.target.set(...EggOrientation.absolute(orientationLatest, orientationHeading));
   orientationView.motionFrame.quaternion.copy(orientationView.target);
-  $("#orientationStatus").textContent = "Recentered · gyro + gravity tracking";
+  $("#orientationStatus").textContent = "Heading recentered · tilt preserved";
 }
 async function setOrientation(on) {
   if (!port) return;
   if (on) makeOrientationView();
+  if (on) setError("");
   await sendOrientationCommand(on ? "orientation fused" : "orientation off");
   orientationActive = on; $("#orientationButton").disabled = on; $("#orientationStopButton").disabled = !on; $("#downloadButton").disabled = on;
   $("#orientationRecenterButton").disabled = true;
   if (!on) { $("#orientationStatus").textContent = "Stopping and releasing EggBert…"; if (activeReader) await activeReader.cancel(); else await disconnect(); return; }
-  orientationReference = orientationLatest = orientationFirstTime = undefined;
+  orientationHeading = 0; orientationLatest = undefined; orientationReady = false;
   orientationView.target.identity();
   orientationView.motionFrame.quaternion.copy(orientationView.target);
-  $("#orientationStatus").textContent = "Hold still in the home pose while orientation starts…";
+  $("#orientationStatus").textContent = "Hold EggBert still briefly in any resting position…";
+  $("#orientationPose").textContent = "Checking resting position…";
+  $("#orientationCanvas").setAttribute("aria-busy", "true");
   const reader = port.readable.getReader(); activeReader = reader; let buffer = "", decoder = new TextDecoder();
-  let watchdog, timedOut = false, legacy = false;
+  let watchdog, timedOut = false, legacy = false, initialized = false;
+  const checkStability = EggOrientation.stability();
   const keepAlive = () => { clearTimeout(watchdog); watchdog = setTimeout(() => { timedOut = true; reader.cancel().catch(() => {}); }, 2500); };
   keepAlive();
   try {
@@ -395,22 +401,26 @@ async function setOrientation(on) {
         const sample = EggOrientation.parse(line);
         if (sample) {
           keepAlive(); orientationLatest = sample.q;
-          if (orientationFirstTime === undefined) orientationFirstTime = sample.time;
-          // Let the sensor initialize before taking the session reference.
-          if (!orientationReference && ((sample.time - orientationFirstTime) >>> 0) >= 600) {
-            orientationReference = sample.q.slice(); $("#orientationRecenterButton").disabled = false;
+          const resting = checkStability(sample);
+          orientationReady = resting.ready;
+          $("#orientationRecenterButton").disabled = !initialized || !resting.ready;
+          $("#orientationPose").textContent = resting.still ? `Detected: ${resting.pose}` : "Moving · hold still to check the resting side";
+          if (!initialized && resting.ready) {
+            orientationHeading = EggOrientation.heading(sample.q); initialized = true;
+            $("#orientationRecenterButton").disabled = false;
+            $("#orientationCanvas").setAttribute("aria-busy", "false");
           }
-          if (orientationReference) {
-            orientationView.target.set(...EggOrientation.relative(orientationReference, sample.q));
-            $("#orientationStatus").textContent = "Gyro + gravity · 60 Hz · full 3D rotation";
-          }
+          if (initialized) orientationView.target.set(...EggOrientation.absolute(sample.q, orientationHeading));
+          $("#orientationStatus").textContent = initialized ? "Gyro + gravity · full 3D rotation" : "Hold EggBert still briefly in any resting position…";
           continue;
         }
         const match = /^O,(-?\d+),(-?\d+),(-?\d+)$/.exec(line);
         if (legacy && match) {
+          $("#orientationCanvas").setAttribute("aria-busy", "false");
           keepAlive(); const x = +match[1], y = +match[2], z = +match[3];
-          const pitch = Math.atan2(x, Math.hypot(y,z)), roll = Math.atan2(z, Math.hypot(x,y));
-          orientationView.target.setFromEuler(new THREE.Euler(roll,0,-pitch));
+          const tilt = EggOrientation.tilt([x,y,z]);
+          if (tilt) orientationView.target.set(...tilt);
+          $("#orientationPose").textContent = `Tilt estimate: ${EggOrientation.pose([x,y,z])}`;
           $("#orientationStatus").textContent = "Tilt only · update EggBert firmware for gyro rotation";
         }
       }
