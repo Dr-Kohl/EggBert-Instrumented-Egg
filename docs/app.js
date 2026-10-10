@@ -347,9 +347,25 @@ function makeOrientationView() {
   const light = new THREE.DirectionalLight(0xffffff, 2.4); light.position.set(4, 6, 5); light.castShadow = true; scene.add(light, new THREE.HemisphereLight(0xcfe4ff, 0x4b5560, 1.4));
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ color: 0x223344, opacity: .18 })); floor.rotation.x = -Math.PI / 2; floor.position.y = -1.05; floor.receiveShadow = true; scene.add(floor);
   const motionFrame = new THREE.Group(), caseFrame = new THREE.Group();
-  // CAD and sensor axes agree: +X USB, +Y buttons, +Z out through the screen.
+  // CAD axes: +X USB, +Y buttons, +Z out through the screen.
   // In the +Y-down home pose: buttons are down, screen faces the viewer, USB is left.
   caseFrame.rotation.set(Math.PI, 0, 0); motionFrame.add(caseFrame); scene.add(motionFrame);
+  // CAD aperture: X [-12.53039,14.66961], Y [-13.69399,1.76601], Z 10..12 mm.
+  // The portrait OLED's top points toward USB (+X); its right points toward -Y.
+  // Keep the screen inside the lip, attached to the same case transform.
+  const screenTexture = new THREE.TextureLoader().load("models/eggbert-home-screen.png");
+  screenTexture.colorSpace = THREE.SRGBColorSpace;
+  screenTexture.magFilter = THREE.NearestFilter;
+  screenTexture.minFilter = THREE.LinearMipmapLinearFilter;
+  const displayBacking = new THREE.Mesh(new THREE.BoxGeometry(27.16 * .045, 15.42 * .045, .2 * .045),
+    new THREE.MeshBasicMaterial({ color: 0x04080b }));
+  displayBacking.position.set(1.06961 * .045, -5.96399 * .045, 11.65 * .045);
+  caseFrame.add(displayBacking);
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(14.8 * .045, 26.5 * .045),
+    new THREE.MeshBasicMaterial({ map: screenTexture, toneMapped: false }));
+  screen.rotation.z = -Math.PI / 2;
+  screen.position.set(1.06961 * .045, -5.96399 * .045, 11.8 * .045);
+  caseFrame.add(screen);
   Promise.all([loadStl("models/eggbert-bottom.stl", 0x55514a), loadStl("models/eggbert-top.stl", 0xd9d0b6)]).then(parts => parts.forEach(part => caseFrame.add(part))).catch(error => { $("#orientationStatus").textContent = error.message; });
   renderer.domElement.addEventListener("wheel", event => { camera.position.multiplyScalar(event.deltaY > 0 ? 1.08 : .92); camera.position.clampLength(4, 10); camera.lookAt(0, 0, 0); event.preventDefault(); }, { passive: false });
   const target = new THREE.Quaternion(); let previousFrame;
