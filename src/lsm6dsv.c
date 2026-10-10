@@ -141,16 +141,21 @@ bool lsm6dsv_read_gyro(int16_t *x, int16_t *y, int16_t *z) {
     return true;
 }
 
-bool lsm6dsv_fifo_start(void) {
+static bool fifo_start_config(uint8_t rate, uint8_t range) {
     lsm6dsv_orientation_stop();
     // Reset the FIFO, then configure it before enabling the high-rate sensor.
     write_reg(LSM6DSV_FIFO_CTRL4, 0x00u); // bypass mode
     write_reg(LSM6DSV_INT1_CTRL, 0x00u);
     write_reg(LSM6DSV_FIFO_CTRL1, LSM6DSV_FIFO_WATERMARK_SAMPLES);
     write_reg(LSM6DSV_FIFO_CTRL2, 0x00u);
-    write_reg(LSM6DSV_FIFO_CTRL3, 0x0Bu); // accelerometer FIFO batch rate: 3.84 kHz
-    write_reg(LSM6DSV_CTRL8, 0x03u);      // accelerometer: +/-16 g
-    write_reg(LSM6DSV_CTRL1, 0x0Bu);      // accelerometer ODR: 3.84 kHz, high-performance
+    write_reg(LSM6DSV_FIFO_CTRL3, rate);
+    write_reg(LSM6DSV_CTRL8, range);
+    write_reg(LSM6DSV_CTRL1, rate);
+    if (read_reg(LSM6DSV_CTRL1) != rate || read_reg(LSM6DSV_CTRL8) != range ||
+        read_reg(LSM6DSV_FIFO_CTRL3) != rate) {
+        lsm6dsv_fifo_stop();
+        return false;
+    }
     write_reg(LSM6DSV_INT1_CTRL, 0x18u);  // FIFO watermark and FIFO overrun
     fifo_irq_pending = false;
     gpio_set_irq_enabled(IMU_INT1_PIN, GPIO_IRQ_EDGE_RISE, true);
@@ -219,6 +224,9 @@ bool lsm6dsv_orientation_start(void) {
     write_reg(LSM6DSV_FIFO_CTRL4, 0x06u);
     return true;
 }
+
+bool lsm6dsv_fifo_start(void) { return fifo_start_config(0x0Bu, 0x03u); }
+bool lsm6dsv_beam_fifo_start(void) { return fifo_start_config(0x08u, 0x00u); }
 
 void lsm6dsv_orientation_stop(void) {
     if (!orientation_running) return;

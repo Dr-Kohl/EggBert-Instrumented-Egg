@@ -4,6 +4,10 @@ First firmware for the JLCPCB Instrumented Egg board. It tests the three LEDs,
 three pushbuttons, LSM6DSVQTR IMU, and the 128x64 I2C OLED while printing results
 over USB CDC.
 
+BEAM now records 15 seconds at 480 Hz and +/-2 g, triggered by a sustained
+0.2 g change after settling. See [Beam recording](BEAM_RECORDING.md) for the
+student workflow, file flags, and frequency-estimate limitations.
+
 ## Pin assignment
 
 | System | RP2354A GPIO | Notes |

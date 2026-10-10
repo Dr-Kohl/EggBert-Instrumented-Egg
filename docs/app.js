@@ -1,7 +1,7 @@
 "use strict";
 
 const HEADER_BYTES = 32, MAGIC = [0x45, 0x47, 0x47, 0x31];
-const FLAG_TRIGGERED = 1, FLAG_FREEFALL = 2, FLAG_FIFO_OVERRUN = 4;
+const FLAG_TRIGGERED = 1, FLAG_FREEFALL = 2, FLAG_FIFO_OVERRUN = 4, FLAG_BEAM = 8, FLAG_CLIPPED = 16;
 let port, activeReader, capture, captureBytes, showLabels = true, orientationActive = false, orientationView;
 let orientationHeading = 0, orientationLatest, orientationReady = false;
 let viewStart = 0, viewSeconds = 0, drag, chartMode = "axes";
@@ -31,6 +31,7 @@ function parseEgg(bytes) {
 }
 
 function detectFlight() {
+  if (capture.flags & FLAG_BEAM) return undefined;
   if (!capture) return undefined;
   const freefallThreshold = 0.4, impactThreshold = 4;
   const minimumFreefallSamples = Math.max(1, Math.round(capture.sampleRate * 0.08));
@@ -57,8 +58,8 @@ function displayCapture(bytes) {
   $("#summary").hidden = false; $("#charts").hidden = false;
   $("#sampleCount").textContent = `${capture.sampleCount.toLocaleString()} samples`;
   $("#sampleRate").textContent = `${capture.sampleRate.toLocaleString()} Hz`;
-  const trigger = (capture.flags & FLAG_TRIGGERED) ? ((capture.flags & FLAG_FREEFALL) ? "Freefall" : "Impact") : "No event";
-  $("#triggerType").textContent = trigger + ((capture.flags & FLAG_FIFO_OVERRUN) ? " · FIFO overrun" : "");
+  const trigger = (capture.flags & FLAG_TRIGGERED) ? ((capture.flags & FLAG_BEAM) ? "Beam flick" : (capture.flags & FLAG_FREEFALL) ? "Freefall" : "Impact") : "No event";
+  $("#triggerType").textContent = trigger + ((capture.flags & FLAG_FIFO_OVERRUN) ? " · FIFO overrun" : "") + ((capture.flags & FLAG_CLIPPED) ? " · Clipped" : "");
   const flight = detectFlight();
   if (flight) {
     const seconds = (flight.impactIndex - flight.startIndex) / capture.sampleRate;
@@ -148,22 +149,24 @@ function drawAll() {
 
 function detectEvents() {
   const events = [];
+  const beam = !!(capture.flags & FLAG_BEAM);
+  const saturation = beam ? 1.99 : 15.9;
   const add = (index, label, color) => { if (index < 0 || index >= capture.sampleCount) return; const nearby = events.find(event => Math.abs(event.index - index) < Math.max(1, capture.sampleRate * 0.04)); if (nearby) { if (!nearby.label.includes(label)) nearby.label += " / " + label; if (color === "#b00020") nearby.color = color; } else events.push({ index, label, color }); };
   if (capture.triggerOffset !== 0xffffffff && capture.triggerOffset < capture.sampleCount) add(capture.triggerOffset, "Trigger", "#7a5f00");
   let peakIndex = 0, peak = 0;
   for (let i = 0; i < capture.sampleCount; i += 1) {
     if (capture.magnitude[i] > peak) { peak = capture.magnitude[i]; peakIndex = i; }
-    if (Math.abs(capture.x[i]) >= 15.9 || Math.abs(capture.y[i]) >= 15.9 || Math.abs(capture.z[i]) >= 15.9) add(i, "Saturation", "#b00020");
+    if (Math.abs(capture.x[i]) >= saturation || Math.abs(capture.y[i]) >= saturation || Math.abs(capture.z[i]) >= saturation) add(i, "Saturation", "#b00020");
   }
   const flight = detectFlight();
   if (flight) {
     add(flight.startIndex, "Flight start", "#2463c5");
     add(flight.impactIndex, "Impact detected", "#b00020");
-  } else {
+  } else if (!beam) {
     const freefallIndex = capture.magnitude.findIndex(value => value < 0.25);
     if (freefallIndex >= 0) add(freefallIndex, "Freefall", "#2463c5");
   }
-  if (peak > 2) add(peakIndex, "Peak impact", "#b00020");
+  if (peak > 2) add(peakIndex, beam ? "Peak acceleration" : "Peak impact", "#b00020");
   if (events.length === 0 || peak <= 2) add(0, "Gravity baseline", "#6240a0");
   return events.sort((a, b) => a.index - b.index);
 }

@@ -64,4 +64,26 @@ const domain = json('currentDomain()');
 fire(canvas,'wheel',{...pointer(500),deltaY:-1,preventDefault(){}});
 assert.equal(run('viewSeconds'),0.8); assert.deepEqual(json('currentDomain()'),domain);
 run('displayCapture(bytes)'); assert.deepEqual(json('cursors'),[null,null]); assert.equal(run('verticalScale'),'auto');
-console.log(`PASS: ${files} real captures; overview extrema, full-detail zoom, stable scales, cursor precision, input, dragging, wheel zoom and capture reset.`);
+// Beam data uses the same format, with its own rate, scale, and trigger flag.
+const beamBytes = new Uint8Array(32 + 7200 * 6);
+const beamHeader = new DataView(beamBytes.buffer);
+beamBytes.set([0x45,0x47,0x47,0x31,1,9]);
+beamHeader.setUint16(6,32,true); beamHeader.setUint32(8,480,true);
+beamHeader.setUint32(12,7200,true); beamHeader.setUint32(16,240,true);
+beamHeader.setUint32(20,6959,true); beamHeader.setUint16(24,16384,true);
+beamHeader.setUint16(26,6,true);
+for (let i=0;i<7200;i++) {
+  beamHeader.setInt16(32+i*6,Math.round(3000*Math.sin(2*Math.PI*0.6*i/480)),true);
+  beamHeader.setInt16(32+i*6+4,16384,true);
+}
+sandbox.beamBytes=beamBytes;
+beamHeader.setUint32(28,run('crc32(beamBytes.slice(32))'),true);
+run('displayCapture(beamBytes)');
+assert.equal(run('capture.validCrc'),true);
+assert.equal(run('captureSeconds()'),15);
+assert.equal(run('capture.z[0]'),1);
+assert.equal(run('capture.triggerOffset/capture.sampleRate'),0.5);
+assert.equal(element('#triggerType').textContent,'Beam flick');
+assert.equal(run('detectFlight()'),undefined);
+assert.ok(json('detectEvents()').every(event=>!event.label.includes('Freefall')&&!event.label.includes('impact')));
+console.log(`PASS: ${files} real captures; overview, zoom, scales, cursors, controls, reset; Beam timing, scale, CRC, and event labels.`);

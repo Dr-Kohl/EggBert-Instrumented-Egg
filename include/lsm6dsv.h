@@ -32,6 +32,8 @@ bool lsm6dsv_orientation_read(lsm6dsv_quaternion_t *quaternion, bool *overrun);
 // Starts FIFO acquisition of accelerometer-only samples at 3.84 kHz and +/-16 g.
 // FIFO watermark and overrun are routed to IMU_INT1_PIN.
 bool lsm6dsv_fifo_start(void);
+// Beam acquisition: 480 Hz, +/-2 g, same accelerometer-only FIFO.
+bool lsm6dsv_beam_fifo_start(void);
 
 // Reads CTRL8, which contains the current accelerometer full-scale selection.
 uint8_t lsm6dsv_read_ctrl8(void);

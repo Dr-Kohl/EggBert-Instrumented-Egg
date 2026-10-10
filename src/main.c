@@ -12,6 +12,8 @@
 #include "hardware/sync.h"
 #include "lsm6dsv.h"
 #include "gyro_session.h"
+#include "beam_trigger.h"
+#include "beam_frequency.h"
 #include "pico/stdlib.h"
 #include "pico/stdio_usb.h"
 #include "ssd1306.h"
@@ -50,6 +52,8 @@ static const uint BUTTONS[] = {BUTTON_3_PIN, BUTTON_2_PIN, BUTTON_1_PIN};
 #define EGG_FLAG_TRIGGERED      0x01u
 #define EGG_FLAG_FREEFALL       0x02u
 #define EGG_FLAG_FIFO_OVERRUN   0x04u
+#define EGG_FLAG_BEAM           0x08u
+#define EGG_FLAG_CLIPPED        0x10u
 
 #define BATTERY_ADC_INPUT        3u
 #define BATTERY_ADC_SAMPLES      16u
@@ -96,6 +100,14 @@ static bool capture_complete;
 static bool capture_fifo_overrun;
 static bool trigger_was_freefall;
 static bool trigger_detected;
+static bool capture_is_beam;
+static bool capture_clipped;
+static uint32_t capture_rate = CAPTURE_RATE_HZ;
+static uint32_t capture_scale = ACCEL_COUNTS_PER_G;
+static uint32_t capture_target = CAPTURE_MAX_SAMPLES;
+static uint32_t capture_pretrigger = PRE_TRIGGER_SAMPLES;
+static beam_trigger_t beam_trigger;
+static uint32_t beam_display_ms, capture_last_sample_ms;
 static absolute_time_t next_capture_poll;
 static bool oled_ok;
 static uint16_t power_out_millivolts;
@@ -153,12 +165,10 @@ static uint32_t pendulum_period_total_ms;
 static uint8_t pendulum_period_count;
 static absolute_time_t pendulum_arm_at;
 
-typedef enum { BEAM_READY, BEAM_WAITING, BEAM_LISTENING, BEAM_RESULT } beam_state_t;
+typedef enum { BEAM_READY, BEAM_WAITING, BEAM_LISTENING, BEAM_RECORDING, BEAM_RESULT } beam_state_t;
 static beam_state_t beam_state;
 static absolute_time_t beam_arm_at;
-static float beam_baseline[3], beam_previous, beam_current;
-static uint32_t beam_samples, beam_crossings, beam_first_cross, beam_last_cross;
-static unsigned beam_axis;
+static float beam_result_hz;
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -279,9 +289,9 @@ static int16_t calibration_correct_axis(int16_t raw, unsigned axis, uint32_t cou
 }
 
 static void calibration_apply_capture_sample(lsm6dsv_accel_sample_t *sample) {
-    sample->x = calibration_correct_axis(sample->x, 0u, ACCEL_COUNTS_PER_G);
-    sample->y = calibration_correct_axis(sample->y, 1u, ACCEL_COUNTS_PER_G);
-    sample->z = calibration_correct_axis(sample->z, 2u, ACCEL_COUNTS_PER_G);
+    sample->x = calibration_correct_axis(sample->x, 0u, capture_scale);
+    sample->y = calibration_correct_axis(sample->y, 1u, capture_scale);
+    sample->z = calibration_correct_axis(sample->z, 2u, capture_scale);
 }
 
 static bool calibration_save(void) {
@@ -789,25 +799,44 @@ static void show_pendulum(void) {
     ssd1306_show();
 }
 
-static void beam_arm(void) { beam_state = BEAM_WAITING; beam_arm_at = make_timeout_time_ms(2500); beam_samples = beam_crossings = 0; beam_baseline[0]=beam_baseline[1]=beam_baseline[2]=0; }
-static void beam_process_sample(void) {
-    if (beam_state == BEAM_WAITING) { if (!time_reached(beam_arm_at)) return; beam_state = BEAM_LISTENING; beam_samples = 0; return; }
-    if (beam_state != BEAM_LISTENING) return;
-    float v[3] = {(float)live_accel_x,(float)live_accel_y,(float)live_accel_z};
-    if (beam_samples < 30u) { for(unsigned i=0;i<3;i++) beam_baseline[i] += v[i]/30.0f; if (++beam_samples==30u) { beam_axis=0; } return; }
-    float d[3]={v[0]-beam_baseline[0],v[1]-beam_baseline[1],v[2]-beam_baseline[2]};
-    if (beam_samples==30u) { for(unsigned i=1;i<3;i++) if(fabsf(d[i])>fabsf(d[beam_axis])) beam_axis=i; beam_previous=d[beam_axis]; beam_current=d[beam_axis]; ++beam_samples; return; }
-    float next=d[beam_axis];
-    if (beam_current>0 && beam_previous<=0 && fabsf(beam_current)>80.0f) { uint32_t t=to_ms_since_boot(get_absolute_time()); if(!beam_crossings) beam_first_cross=t; beam_last_cross=t; ++beam_crossings; }
-    beam_previous=beam_current; beam_current=next; ++beam_samples;
-    if (beam_samples >= 270u) beam_state=BEAM_RESULT;
-}
+static void beam_arm(void);
 static void show_beam(void) {
-    if(!oled_ok)return; char t[12]; ui_begin("BEAM","I");
-    if(beam_state==BEAM_READY){ssd1306_ui_text(16,32,"CLAMP",true);ssd1306_ui_text(16,46,"MID ARM",true);}
-    else if(beam_state==BEAM_WAITING){ssd1306_ui_text(16,32,"SET UP",true);ssd1306_ui_text(16,47,"AUTO ARM",true);}
-    else if(beam_state==BEAM_LISTENING){ssd1306_ui_text(16,32,"TAP BEAM",true);ssd1306_ui_text(16,47,"LISTEN",true);}
-    else { float hz=beam_crossings>1 ? 1000.0f*(beam_crossings-1u)/(beam_last_cross-beam_first_cross) : 0; uint32_t h=(uint32_t)(hz*10+.5f); snprintf(t,sizeof t,"HZ %lu.%lu",(unsigned long)(h/10),(unsigned long)(h%10)); ssd1306_ui_text(16,36,t,true); ssd1306_ui_text(16,52,"MID AGAIN",true); } ssd1306_show();
+    if (!oled_ok) return;
+    char line[12]; ui_begin("BEAM", "I");
+    if (beam_state == BEAM_READY) {
+        ssd1306_ui_text(16,32,"CLAMP",true);
+        ssd1306_ui_text(16,46,"MID ARM",true);
+        ssd1306_ui_text(16,62,"480 HZ",true);
+        ssd1306_ui_text(16,76,"15 SEC",true);
+    } else if (beam_state == BEAM_WAITING) {
+        ssd1306_ui_text(16,32,"HOLD",true);
+        ssd1306_ui_text(16,46,"STILL",true);
+        ssd1306_ui_text(16,112,"MID STOP",true);
+    } else if (beam_state == BEAM_LISTENING) {
+        ssd1306_ui_text(16,32,"READY",true);
+        ssd1306_ui_text(16,46,"FLICK",true);
+        ssd1306_ui_text(16,62,"0.2 G",true);
+        ssd1306_ui_text(16,112,"MID STOP",true);
+    } else if (beam_state == BEAM_RECORDING) {
+        unsigned remaining = (capture_target-capture_pretrigger-1u-post_trigger_samples+BEAM_RATE_HZ-1u)/BEAM_RATE_HZ;
+        snprintf(line,sizeof line,"LEFT %u S",remaining);
+        ssd1306_ui_text(16,32,"RECORD",true);
+        ssd1306_ui_text(16,48,line,true);
+    } else {
+        if (beam_result_hz > 0) {
+            unsigned hundredths = (unsigned)(beam_result_hz*100+0.5f);
+            snprintf(line,sizeof line,"HZ %u.%02u",hundredths/100,hundredths%100);
+            ssd1306_ui_text(16,32,line,true);
+            ssd1306_ui_text(16,46,"ESTIMATE",true);
+        } else {
+            ssd1306_ui_text(16,32,"NO CLEAR",true);
+            ssd1306_ui_text(16,46,"PERIOD",true);
+        }
+        if (capture_clipped) ssd1306_ui_text(16,62,"CLIPPED",true);
+        ssd1306_ui_text(16,78,"USB DL",true);
+        ssd1306_ui_text(16,112,"MID OPT",true);
+    }
+    ssd1306_show();
 }
 
 static void show_record_menu(void) {
@@ -915,6 +944,7 @@ static void show_capture_event(void) {
 }
 
 static void show_capture_complete(void) {
+    if (capture_is_beam) { beam_state=BEAM_RESULT; show_beam(); return; }
     if (!oled_ok) return;
     ui_begin("DONE", "D");
     ssd1306_ui_text(18, 36, "USB", true);
@@ -1119,13 +1149,13 @@ static const char *capture_state_name(void) {
 static void print_capture_status(void) {
     printf("Capture: %s, %lu/%u ring samples, FIFO overrun: %s",
            capture_state_name(),
-           (unsigned long)capture_count, CAPTURE_MAX_SAMPLES,
+           (unsigned long)capture_count, (unsigned)capture_target,
            capture_fifo_overrun ? "YES" : "no");
     if (trigger_detected)
         printf(", trigger: %s at ring index %lu",
-               trigger_was_freefall ? "FREEFALL" : "IMPACT",
+               capture_is_beam ? "BEAM FLICK" : trigger_was_freefall ? "FREEFALL" : "IMPACT",
                (unsigned long)trigger_index);
-    printf("\n");
+    printf(", %lu Hz, %lu counts/g\n", (unsigned long)capture_rate, (unsigned long)capture_scale);
 }
 
 static size_t capture_first_index(void) {
@@ -1179,6 +1209,8 @@ static void download_capture(void) {
     if (trigger_detected) flags |= EGG_FLAG_TRIGGERED;
     if (trigger_was_freefall) flags |= EGG_FLAG_FREEFALL;
     if (capture_fifo_overrun) flags |= EGG_FLAG_FIFO_OVERRUN;
+    if (capture_is_beam) flags |= EGG_FLAG_BEAM;
+    if (capture_clipped) flags |= EGG_FLAG_CLIPPED;
     uint32_t trigger_offset = 0xffffffffu;
     if (trigger_detected) {
         size_t first = capture_first_index();
@@ -1195,11 +1227,11 @@ static void download_capture(void) {
     write_u8(EGG_FILE_VERSION);
     write_u8(flags);
     write_u16(EGG_FILE_HEADER_BYTES);
-    write_u32(CAPTURE_RATE_HZ);
+    write_u32(capture_rate);
     write_u32((uint32_t)capture_count);
     write_u32(trigger_offset);
     write_u32(post_trigger_samples);
-    write_u16(ACCEL_COUNTS_PER_G);
+    write_u16((uint16_t)capture_scale);
     write_u16(EGG_FILE_SAMPLE_BYTES);
     write_u32(payload_crc);
 
@@ -1228,6 +1260,12 @@ static void start_capture(void) {
         printf("Capture is protected. Erase it from the EggBert menu before rearming.\n");
         return;
     }
+    capture_is_beam = false;
+    capture_clipped = false;
+    capture_rate = CAPTURE_RATE_HZ;
+    capture_scale = ACCEL_COUNTS_PER_G;
+    capture_target = CAPTURE_MAX_SAMPLES;
+    capture_pretrigger = PRE_TRIGGER_SAMPLES;
     capture_count = 0;
     capture_write_index = 0;
     capture_oldest_index = 0;
@@ -1250,6 +1288,65 @@ static void start_capture(void) {
     printf("Capture armed from EggBert menu: hold still for one second, then wait for freefall or impact.\n");
 }
 
+static void beam_arm(void) {
+    if (capture_complete) {
+        ui_state = UI_CAPTURE_OPTIONS; ui_selection = 0; show_ui();
+        printf("Capture protected: download and erase it before arming Beam.\n");
+        return;
+    }
+    capture_is_beam = true;
+    capture_clipped = false;
+    capture_rate = BEAM_RATE_HZ;
+    capture_scale = BEAM_COUNTS_PER_G;
+    capture_target = BEAM_TOTAL_SAMPLES;
+    capture_pretrigger = BEAM_PRE_SAMPLES;
+    capture_count = capture_write_index = capture_oldest_index = trigger_index = 0;
+    post_trigger_samples = 0;
+    trigger_detected = trigger_was_freefall = capture_fifo_overrun = false;
+    beam_result_hz = 0;
+    beam_trigger_reset(&beam_trigger);
+    if (!lsm6dsv_beam_fifo_start()) {
+        printf("ERROR: Beam FIFO configuration failed.\n");
+        beam_state = BEAM_READY; return;
+    }
+    capture_active = true;
+    capture_state = CAPTURE_WAIT_STILL;
+    beam_state = BEAM_WAITING;
+    beam_arm_at = make_timeout_time_ms(2500);
+    beam_display_ms = capture_last_sample_ms = to_ms_since_boot(get_absolute_time());
+    next_capture_poll = make_timeout_time_ms(5);
+    show_beam();
+    printf("BEAM: 480 Hz +/-2 g, 15 seconds, 0.2 g for 5 samples; settle then flick.\n");
+}
+
+static float estimate_beam_frequency(void) {
+    // Ignore the first half-second after detection, including the initial yank.
+    size_t trigger_offset = (trigger_index + CAPTURE_MAX_SAMPLES-capture_first_index()) % CAPTURE_MAX_SAMPLES;
+    size_t begin = trigger_offset + BEAM_RATE_HZ/2u;
+    if (begin >= capture_count) return 0;
+    unsigned axis = 0;
+    double sums[3] = {0}, squares[3] = {0};
+    for (size_t i=begin; i<capture_count; ++i) {
+        const lsm6dsv_accel_sample_t *s=capture_sample_at(i);
+        float v[3]={s->x,s->y,s->z};
+        for (unsigned a=0; a<3; ++a) { sums[a]+=v[a]; squares[a]+=v[a]*v[a]; }
+    }
+    for (unsigned a=1; a<3; ++a)
+        if (squares[a]-sums[a]*sums[a]/(capture_count-begin) >
+            squares[axis]-sums[axis]*sums[axis]/(capture_count-begin)) axis=a;
+    static float signal[BEAM_SECONDS*60u];
+    size_t count=0;
+    for (size_t i=begin; i+8u<=capture_count; i+=8u) {
+        float sum=0;
+        for (size_t j=0; j<8u; ++j) {
+            const lsm6dsv_accel_sample_t *s=capture_sample_at(i+j);
+            sum += axis==0 ? s->x : axis==1 ? s->y : s->z;
+        }
+        signal[count++]=sum/8;
+    }
+    return beam_frequency(signal,count);
+}
+
 static void finish_capture(const char *reason) {
     if (!capture_active) return;
     lsm6dsv_fifo_stop();
@@ -1258,7 +1355,11 @@ static void finish_capture(const char *reason) {
     capture_state = CAPTURE_COMPLETE;
     ui_state = UI_CAPTURE_COMPLETE;
     ui_selection = 0;
-    show_capture_complete();
+    if (capture_is_beam) {
+        beam_result_hz = capture_fifo_overrun ? 0 : estimate_beam_frequency();
+        beam_state = BEAM_RESULT; ui_state = UI_BEAM;
+        show_beam();
+    } else show_capture_complete();
     printf("Capture complete (%s). ", reason);
     print_capture_status();
 }
@@ -1282,6 +1383,8 @@ static void erase_capture(void) {
 // This challenge uses the FIFO for timely samples but deliberately never
 // writes the RAM capture buffer. A saved .egg file therefore remains intact.
 static void start_gentle_catch(void) {
+    // A saved Beam recording must retain its own rate and scale metadata.
+    if (!capture_complete) { capture_is_beam = false; capture_scale = ACCEL_COUNTS_PER_G; }
     gentle_measure_samples = 0;
     gentle_peak_axis_counts = 0;
     gentle_rearm_still_samples = 0;
@@ -1390,7 +1493,7 @@ static void store_capture_sample(const lsm6dsv_accel_sample_t *sample) {
 static void retain_pretrigger_window(void) {
     // Keep exactly the rolling half-second before the trigger plus its sample.
     // This discards the menu/arming delay without copying the large RAM buffer.
-    size_t keep = PRE_TRIGGER_SAMPLES + 1u;
+    size_t keep = capture_pretrigger + 1u;
     if (capture_count < keep) keep = capture_count;
     capture_oldest_index = (capture_write_index + CAPTURE_MAX_SAMPLES - keep) % CAPTURE_MAX_SAMPLES;
     capture_count = keep;
@@ -1455,6 +1558,37 @@ static void process_gentle_sample(const lsm6dsv_accel_sample_t *sample) {
 }
 
 static void process_capture_sample(const lsm6dsv_accel_sample_t *sample) {
+    if (capture_is_beam && ui_state == UI_BEAM) {
+        uint32_t now = to_ms_since_boot(get_absolute_time());
+        capture_last_sample_ms = now;
+        store_capture_sample(sample);
+        if (sample_peak_axis(sample) >= 32700u) capture_clipped = true;
+        if (capture_state == CAPTURE_WAIT_STILL || capture_state == CAPTURE_WAIT_EVENT) {
+            if (time_reached(beam_arm_at)) {
+                bool was_ready = beam_trigger.ready;
+                bool fired = beam_trigger_sample(&beam_trigger,sample->x,sample->y,sample->z);
+                if (!was_ready && beam_trigger.ready) {
+                    beam_state=BEAM_LISTENING; capture_state=CAPTURE_WAIT_EVENT;
+                    capture_clipped=false; show_beam();
+                    printf("BEAM READY: flick beam.\n");
+                }
+                if (fired) {
+                    trigger_detected=true;
+                    trigger_index=(capture_write_index+CAPTURE_MAX_SAMPLES-1u)%CAPTURE_MAX_SAMPLES;
+                    retain_pretrigger_window();
+                    post_trigger_samples=0; beam_state=BEAM_RECORDING;
+                    capture_state=CAPTURE_POST_EVENT; show_beam();
+                    printf("BEAM TRIGGER: 0.2 g sustained for 5 samples.\n");
+                }
+            }
+        } else if (capture_state == CAPTURE_POST_EVENT) {
+            if (++post_trigger_samples >= capture_target-capture_pretrigger-1u) {
+                finish_capture("beam 15-second window complete"); return;
+            }
+        }
+        if (now-beam_display_ms>=250u) { beam_display_ms=now; show_beam(); }
+        return;
+    }
     if (capture_state >= CAPTURE_GENTLE_WAIT_FALL) {
         process_gentle_sample(sample);
         return;
@@ -1496,6 +1630,12 @@ static void process_capture_sample(const lsm6dsv_accel_sample_t *sample) {
 
 static void service_capture(void) {
     if (!capture_active) return;
+    if (capture_is_beam && ui_state == UI_BEAM &&
+        to_ms_since_boot(get_absolute_time())-capture_last_sample_ms>1500u) {
+        lsm6dsv_fifo_stop(); capture_active=false; capture_count=0;
+        capture_state=CAPTURE_IDLE; beam_state=BEAM_READY;
+        show_beam(); printf("ERROR: Beam sensor timeout; arm again.\n"); return;
+    }
 
     // The watermark IRQ is the normal service signal. A 5 ms poll is only a
     // backstop for a final fragment that never reaches the 32-sample watermark.
@@ -1510,7 +1650,11 @@ static void service_capture(void) {
         if (overrun) capture_fifo_overrun = true;
         if (read == 0) break;
         for (size_t i = 0; i < read && capture_active; ++i) {
-            calibration_apply_capture_sample(&fifo_samples[i]);
+            if (ui_state == UI_GENTLE_CATCH) {
+                fifo_samples[i].x=calibration_correct_axis(fifo_samples[i].x,0u,ACCEL_COUNTS_PER_G);
+                fifo_samples[i].y=calibration_correct_axis(fifo_samples[i].y,1u,ACCEL_COUNTS_PER_G);
+                fifo_samples[i].z=calibration_correct_axis(fifo_samples[i].z,2u,ACCEL_COUNTS_PER_G);
+            } else calibration_apply_capture_sample(&fifo_samples[i]);
             process_capture_sample(&fifo_samples[i]);
         }
     }
@@ -1592,6 +1736,10 @@ static void handle_button_press(unsigned button) {
     if (orientation_fused) { stop_orientation(); printf("ORIENTATION STOPPED: device menu\n"); }
     if (capture_active) {
         if (ui_state == UI_GENTLE_CATCH && button == 1) exit_gentle_catch();
+        else if (ui_state == UI_BEAM && button == 1 && beam_state != BEAM_RECORDING) {
+            lsm6dsv_fifo_stop(); capture_active=false; capture_state=CAPTURE_IDLE;
+            capture_count=0; beam_state=BEAM_READY; show_beam();
+        }
         return;
     }
 
@@ -1665,8 +1813,10 @@ static void handle_button_press(unsigned button) {
         return;
     }
     if (ui_state == UI_BEAM) {
-        if (button == 1) { if (beam_state == BEAM_READY || beam_state == BEAM_RESULT) beam_arm(); else beam_state = BEAM_READY; }
-        else if (button == 0 && beam_state != BEAM_LISTENING) { ui_state = UI_HOME; ui_selection = 6; }
+        if (button == 1) {
+            if (beam_state == BEAM_RESULT) { ui_state=UI_CAPTURE_OPTIONS; ui_selection=0; }
+            else if (beam_state == BEAM_READY) beam_arm();
+        } else if (button == 0) { ui_state = UI_HOME; ui_selection = 6; }
         show_ui(); return;
     }
 
@@ -1696,7 +1846,7 @@ static void handle_button_press(unsigned button) {
         else if (ui_selection == 3) { ui_state = UI_ACCELERATION; ui_selection = 0; }
         else if (ui_selection == 4) { ui_state = UI_INCLINOMETER; ui_selection = 0; }
         else if (ui_selection == 5) { friction_reset_session(); ui_state = UI_FRICTION; ui_selection = 0; }
-        else if (ui_selection == 6) { beam_state = BEAM_READY; ui_state = UI_BEAM; ui_selection = 0; }
+        else if (ui_selection == 6) { beam_state = capture_complete && capture_is_beam ? BEAM_RESULT : BEAM_READY; ui_state = UI_BEAM; ui_selection = 0; }
         else if (ui_selection == 7) { ui_state = UI_RAW_XYZ; ui_selection = 0; }
         else if (ui_selection == 9) { ui_state = UI_GYRO; ui_selection = 0; gyro_begin(); }
         else { calibration_reset_wizard(); ui_state = UI_CALIBRATION; ui_selection = 0; }
@@ -1814,7 +1964,6 @@ int main(void) {
                 update_level_filter();
                 friction_process_sample();
                 pendulum_process_sample();
-                beam_process_sample();
                 printf("Accel raw: X=%d Y=%d Z=%d (0.061 mg/LSB)\n", x, y, z);
                 if (ui_state == UI_ACCELERATION) show_acceleration();
                 else if (ui_state == UI_RAW_XYZ) show_raw_xyz();
