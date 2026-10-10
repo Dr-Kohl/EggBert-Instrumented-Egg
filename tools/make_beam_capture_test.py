@@ -50,13 +50,13 @@ functions='\n'.join(function(name) for name in [
 test='''
 int beam_capture_test(void) {
     capture_active=capture_is_beam=true;
-    capture_rate=480; capture_scale=16384;
+    capture_rate=480; capture_scale=8192;
     capture_target=7200; capture_pretrigger=240;
     capture_state=CAPTURE_WAIT_STILL;
-    lsm6dsv_accel_sample_t s={0,0,16384};
-    for (unsigned i=0;i<40000;i++) { fake_time+=2; process_capture_sample(&s); }
+    lsm6dsv_accel_sample_t s={0,0,8192};
+    for (unsigned i=0;i<20000;i++) { fake_time+=2; process_capture_sample(&s); }
     if (!beam_trigger.ready || trigger_detected) return 30;
-    s.x=4000;
+    s.x=2000;
     for (unsigned i=0;i<5;i++) { fake_time+=2; process_capture_sample(&s); }
     if (!trigger_detected || capture_count!=241 || post_trigger_samples) return 31;
     if ((trigger_index+CAPTURE_MAX_SAMPLES-capture_first_index())%CAPTURE_MAX_SAMPLES!=240) return 32;
@@ -65,7 +65,7 @@ int beam_capture_test(void) {
         if (!capture_active && i!=6958) return 33;
     }
     if (capture_active || !capture_complete || capture_count!=7200 || post_trigger_samples!=6959) return 34;
-    if (capture_sample_at(0)->x!=0 || capture_sample_at(240)->x!=4000 ||
+    if (capture_sample_at(0)->x!=0 || capture_sample_at(240)->x!=2000 ||
         capture_sample_at(241)->x!=0 || capture_sample_at(7199)->x!=6958) return 35;
     return 0;
 }

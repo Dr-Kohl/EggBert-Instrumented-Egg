@@ -226,7 +226,7 @@ bool lsm6dsv_orientation_start(void) {
 }
 
 bool lsm6dsv_fifo_start(void) { return fifo_start_config(0x0Bu, 0x03u); }
-bool lsm6dsv_beam_fifo_start(void) { return fifo_start_config(0x08u, 0x00u); }
+bool lsm6dsv_beam_fifo_start(void) { return fifo_start_config(0x08u, 0x01u); }
 
 void lsm6dsv_orientation_stop(void) {
     if (!orientation_running) return;

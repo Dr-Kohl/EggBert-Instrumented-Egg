@@ -1,6 +1,7 @@
 #pragma once
 #include <math.h>
 #include <stddef.h>
+#include "beam_trigger.h"
 
 // Autocorrelation estimate over 0.3--20 Hz. Input is averaged to 60 Hz;
 // remove the DC offset and linear drift before comparing repeated cycles.
@@ -19,7 +20,8 @@ static inline float beam_frequency(float *signal, size_t count) {
         signal[i] -= mean + (slope_sum/slope_den)*(i-middle);
         energy += signal[i]*signal[i];
     }
-    if (energy/count < 80.0f*80.0f) return 0; // below about 0.005 g RMS
+    const float minimum_rms = 0.005f * BEAM_COUNTS_PER_G;
+    if (energy/count < minimum_rms*minimum_rms) return 0;
     float corr[202] = {0};
     for (unsigned lag=2; lag<=201; ++lag) {
         float cross=0, e1=0, e2=0;

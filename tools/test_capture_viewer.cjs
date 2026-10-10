@@ -86,4 +86,23 @@ assert.equal(run('capture.triggerOffset/capture.sampleRate'),0.5);
 assert.equal(element('#triggerType').textContent,'Beam flick');
 assert.equal(run('detectFlight()'),undefined);
 assert.ok(json('detectEvents()').every(event=>!event.label.includes('Freefall')&&!event.label.includes('impact')));
+assert.equal(run('capture.fullScaleG'),2);
+// New +/-4 g files retain the physical scale and use their own clipping rail.
+beamHeader.setUint16(24,8192,true);
+for (let i=0;i<7200;i++) {
+  beamHeader.setInt16(32+i*6,Math.round(1500*Math.sin(2*Math.PI*0.6*i/480)),true);
+  beamHeader.setInt16(32+i*6+4,8192,true);
+}
+beamHeader.setInt16(32+480*6,20480,true); // 2.5g is valid at +/-4g
+beamHeader.setUint32(28,run('crc32(beamBytes.slice(32))'),true);
+run('displayCapture(beamBytes)');
+assert.equal(run('capture.validCrc'),true);
+assert.equal(run('capture.fullScaleG'),4);
+assert.equal(run('capture.z[0]'),1);
+assert.equal(run('capture.x[480]'),2.5);
+assert.ok(json('detectEvents()').every(event=>!event.label.includes('Saturation')));
+beamHeader.setInt16(32+480*6,32764,true);
+beamHeader.setUint32(28,run('crc32(beamBytes.slice(32))'),true);
+run('displayCapture(beamBytes)');
+assert.ok(json('detectEvents()').some(event=>event.label.includes('Saturation')));
 console.log(`PASS: ${files} real captures; overview, zoom, scales, cursors, controls, reset; Beam timing, scale, CRC, and event labels.`);

@@ -27,7 +27,7 @@ function parseEgg(bytes) {
   if (bytes.length !== totalBytes) throw new Error(`Incomplete capture: expected ${totalBytes} bytes, received ${bytes.length}.`);
   const x = new Float32Array(sampleCount), y = new Float32Array(sampleCount), z = new Float32Array(sampleCount), magnitude = new Float32Array(sampleCount);
   for (let i = 0; i < sampleCount; i += 1) { const offset = headerBytes + i * sampleBytes; x[i] = view.getInt16(offset, true) / countsPerG; y[i] = view.getInt16(offset + 2, true) / countsPerG; z[i] = view.getInt16(offset + 4, true) / countsPerG; magnitude[i] = Math.hypot(x[i], y[i], z[i]); }
-  return { flags, sampleRate, sampleCount, triggerOffset, postSamples, x, y, z, magnitude, validCrc: crc32(bytes.slice(headerBytes)) === expectedCrc };
+  return { flags, sampleRate, sampleCount, triggerOffset, postSamples, fullScaleG: 32768 / countsPerG, x, y, z, magnitude, validCrc: crc32(bytes.slice(headerBytes)) === expectedCrc };
 }
 
 function detectFlight() {
@@ -150,7 +150,7 @@ function drawAll() {
 function detectEvents() {
   const events = [];
   const beam = !!(capture.flags & FLAG_BEAM);
-  const saturation = beam ? 1.99 : 15.9;
+  const saturation = beam ? capture.fullScaleG * (32700 / 32768) : 15.9;
   const add = (index, label, color) => { if (index < 0 || index >= capture.sampleCount) return; const nearby = events.find(event => Math.abs(event.index - index) < Math.max(1, capture.sampleRate * 0.04)); if (nearby) { if (!nearby.label.includes(label)) nearby.label += " / " + label; if (color === "#b00020") nearby.color = color; } else events.push({ index, label, color }); };
   if (capture.triggerOffset !== 0xffffffff && capture.triggerOffset < capture.sampleCount) add(capture.triggerOffset, "Trigger", "#7a5f00");
   let peakIndex = 0, peak = 0;

@@ -5,7 +5,7 @@ beam. A 2.5-second settling delay is followed by one second of stable samples
 (vector range at most 0.04 g). The resulting three-axis gravity baseline stays
 fixed while armed. READY / FLICK appears when settling is complete.
 
-A vector acceleration change of at least 0.2 g (3,277 counts at +/-2 g)
+A vector acceleration change of at least 0.2 g (1,639 counts at +/-4 g)
 for five consecutive 480 Hz samples starts the recording. A sample below the
 threshold resets this consecutive count. The trigger is independent of which
 axis points up. Tilting or moving the assembly can trigger it, so students
@@ -18,10 +18,10 @@ remain in RAM until erased or power is lost. MID STOP cancels while settling or
 armed; once triggered, the recording runs to completion. Existing saved data
 is protected: download and erase before starting another capture.
 
-Acquisition uses the accelerometer FIFO at 480 Hz and +/-2 g. FIFO rate,
+Acquisition uses the accelerometer FIFO at 480 Hz and +/-4 g. FIFO rate,
 accelerometer rate, and range registers are checked at startup. FIFO overflow
 is reported in the file; a 1.5-second sensor timeout cancels with a serial error.
-Clipping near either +/-2 g rail is flagged. Ordinary drop recording remains
+Clipping near either +/-4 g rail is flagged. Ordinary drop recording remains
 3,840 Hz, +/-16 g, five seconds, with its existing freefall trigger.
 
 On completion, EggBert shows a frequency estimate over 0.3--20 Hz. It ignores
@@ -34,7 +34,7 @@ in gravity from bending, clipping, and rapid decay can affect it. Verify on
 the actual beam using the downloaded waveform and known cycle times.
 
 EGG1 remains version 1 with the existing 32-byte header. The header specifies
-480 Hz and 16,384 counts/g for Beam, rather than hard-coded drop settings.
+480 Hz and 8,192 counts/g for Beam, rather than hard-coded drop settings.
 Flag 0x08 denotes Beam; flag 0x10 denotes clipping. Existing flags 0x01
 (triggered), 0x02 (freefall), and 0x04 (FIFO overflow) are unchanged. CRC covers
 the six-byte XYZ payload as before. The Capture Viewer reads the header's rate

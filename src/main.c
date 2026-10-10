@@ -1316,7 +1316,7 @@ static void beam_arm(void) {
     beam_display_ms = capture_last_sample_ms = to_ms_since_boot(get_absolute_time());
     next_capture_poll = make_timeout_time_ms(5);
     show_beam();
-    printf("BEAM: 480 Hz +/-2 g, 15 seconds, 0.2 g for 5 samples; settle then flick.\n");
+    printf("BEAM: 480 Hz +/-4 g, 15 seconds, 0.2 g for 5 samples; settle then flick.\n");
 }
 
 static float estimate_beam_frequency(void) {

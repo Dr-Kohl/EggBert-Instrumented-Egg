@@ -5,10 +5,10 @@
 
 #define BEAM_RATE_HZ 480u
 #define BEAM_SECONDS 15u
-#define BEAM_COUNTS_PER_G 16384u
+#define BEAM_COUNTS_PER_G 8192u
 #define BEAM_PRE_SAMPLES (BEAM_RATE_HZ / 2u)
 #define BEAM_TOTAL_SAMPLES (BEAM_RATE_HZ * BEAM_SECONDS)
-#define BEAM_TRIGGER_COUNTS 3277u // 0.2 g, rounded upward
+#define BEAM_TRIGGER_COUNTS ((BEAM_COUNTS_PER_G + 4u) / 5u) // 0.2 g, rounded upward
 #define BEAM_TRIGGER_SAMPLES 5u   // 10.4 ms at 480 Hz
 
 typedef struct {
@@ -38,7 +38,8 @@ static inline bool beam_trigger_sample(beam_trigger_t *state, int16_t x, int16_t
             int64_t d = state->maximum[a] - state->minimum[a];
             range_squared += d*d;
         }
-        if (range_squared > 655LL*655LL) {
+        const int64_t settling_counts = BEAM_COUNTS_PER_G / 25u;
+        if (range_squared > settling_counts*settling_counts) {
             beam_trigger_reset(state);
             return false;
         }
