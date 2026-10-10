@@ -1,5 +1,10 @@
 # Beam recording
 
+The public Capture Viewer includes **Long beam vibration (+/-4 g)** in Load
+sample and its recorded-captures list. This real recording contains 7,200
+samples at 480 Hz, has a verified CRC and no clipping, and shows a dominant
+vibration near 4.8 Hz. The original file was `Beam Long best.egg`.
+
 Select BEAM on HOME 2 and press MID ARM. Mount EggBert firmly on a clamped
 beam. A 2.5-second settling delay is followed by one second of stable samples
 (vector range at most 0.04 g). The resulting three-axis gravity baseline stays
