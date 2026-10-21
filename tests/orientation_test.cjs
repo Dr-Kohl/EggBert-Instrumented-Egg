@@ -73,7 +73,10 @@ async function scenario(kind) {
     if (!name.endsWith('.egg')) continue;
     context.savedCapture = new Uint8Array(fs.readFileSync(require.resolve('../docs/orientation.js').replace('orientation.js','sample-data/'+name)));
     const capture = vm.runInContext('parseEgg(savedCapture)',context);
-    assert.equal(capture.validCrc,true); assert.equal(capture.sampleCount,19200);
+    assert.equal(capture.validCrc,true);
+    const beam = !!(capture.flags & 0x08);
+    assert.equal(capture.sampleRate, beam ? 480 : 3840);
+    assert.equal(capture.sampleCount, beam ? 7200 : 19200);
   }
   context.fakePort=fakePort;
   vm.runInContext('port=fakePort; orientationView={motionFrame:{quaternion:{copy(){} }}, target:{set(){},identity(){}}};',context);

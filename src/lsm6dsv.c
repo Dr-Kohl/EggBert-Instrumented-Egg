@@ -7,7 +7,8 @@
 #include "pico/stdlib.h"
 
 #define LSM6DSV_WHO_AM_I       0x0Fu
-#define LSM6DSV_WHO_AM_I_VALUE 0x70u
+#define LSM6DSV320X_CTRL1_XL_HG 0x4Eu
+#define LSM6DSV320X_COUNTER_BDR_REG1 0x0Bu
 #define LSM6DSV_CTRL1          0x10u
 #define LSM6DSV_CTRL2          0x11u
 #define LSM6DSV_CTRL3          0x12u
@@ -30,6 +31,13 @@
 #define FIFO_STATUS_OVERRUN_LATCHED     0x08u
 
 static volatile bool fifo_irq_pending;
+static lsm6dsv_model_t detected_model;
+static uint8_t detected_id;
+static bool dual_running;
+static lsm6dsv_dual_stats_t dual_stats;
+static lsm6dsv_accel_pair_t pending_pair;
+static uint8_t pending_mask, pending_slot, previous_slot;
+static bool have_pair;
 static bool orientation_running;
 static const uint8_t orientation_regs[] = {0x07, 0x08, 0x09, 0x0A, 0x0D, 0x10, 0x11, 0x12, 0x15, 0x17};
 static uint8_t orientation_saved[sizeof orientation_regs];
@@ -51,6 +59,16 @@ static void write_reg(uint8_t reg, uint8_t value) {
     select_imu(true);
     spi_write_blocking(IMU_SPI, tx, sizeof tx);
     select_imu(false);
+}
+
+lsm6dsv_model_t lsm6dsv_model(void) { return detected_model; }
+uint8_t lsm6dsv_device_id(void) { return detected_id; }
+const char *lsm6dsv_model_name(void) {
+    switch (detected_model) {
+    case LSM6DSV_MODEL_LSM6DSV: return "LSM6DSV";
+    case LSM6DSV_MODEL_LSM6DSV320X: return "LSM6DSV320X";
+    default: return "UNKNOWN";
+    }
 }
 
 static void imu_irq_callback(uint gpio, uint32_t events) {
@@ -85,6 +103,11 @@ static bool read_fifo_sample(lsm6dsv_accel_sample_t *sample) {
 }
 
 bool lsm6dsv_init(void) {
+    dual_running = false;
+    detected_model = LSM6DSV_MODEL_UNKNOWN;
+    detected_id = 0;
+    orientation_running = false;
+    fifo_irq_pending = false;
     spi_init(IMU_SPI, IMU_SPI_BAUD);
     gpio_set_function(IMU_MISO_PIN, GPIO_FUNC_SPI);
     gpio_set_function(IMU_SCK_PIN, GPIO_FUNC_SPI);
@@ -96,15 +119,42 @@ bool lsm6dsv_init(void) {
     gpio_init(IMU_INT2_PIN); gpio_set_dir(IMU_INT2_PIN, GPIO_IN);
     spi_set_format(IMU_SPI, 8, SPI_CPOL_1, SPI_CPHA_1, SPI_MSB_FIRST);
 
-    if (read_reg(LSM6DSV_WHO_AM_I) != LSM6DSV_WHO_AM_I_VALUE) return false;
     gpio_set_irq_enabled_with_callback(IMU_INT1_PIN, GPIO_IRQ_EDGE_RISE, false,
                                        &imu_irq_callback);
-    // High-performance mode, +/-2 g (default scale), 120 Hz output data rate.
+    // Allow power-up settling; never configure an unknown device.
+    sleep_ms(20);
+    for (unsigned attempt = 0; attempt < 5; ++attempt) {
+        detected_id = read_reg(LSM6DSV_WHO_AM_I);
+        if (detected_id == 0x70u || detected_id == 0x73u) break;
+        sleep_ms(10);
+    }
+    if (detected_id != 0x70u && detected_id != 0x73u) return false;
+
+    // Both devices share SW_RESET, BDU, IF_INC and the low-g/gyro register map.
+    // Reset prevents a preceding firmware session from leaving high-g or fusion on.
+    write_reg(LSM6DSV_CTRL3, 0x01u);
+    unsigned reset_wait;
+    for (reset_wait = 0; reset_wait < 100; ++reset_wait) {
+        sleep_ms(1);
+        if (!(read_reg(LSM6DSV_CTRL3) & 0x01u)) break;
+    }
+    if (reset_wait == 100 || read_reg(LSM6DSV_WHO_AM_I) != detected_id) return false;
+    write_reg(LSM6DSV_CTRL3, 0x44u); // coherent XYZ burst reads
+    write_reg(LSM6DSV_CTRL2, 0x00u); // gyro remains on-demand
+    write_reg(LSM6DSV_CTRL8, 0x00u); // +/-2 g live mode on both boards
+    // Advanced capture is a later milestone: explicitly leave high-g powered down.
+    if (detected_id == 0x73u) write_reg(LSM6DSV320X_CTRL1_XL_HG, 0x00u);
     write_reg(LSM6DSV_CTRL1, 0x06u);
+    if (read_reg(LSM6DSV_CTRL3) != 0x44u || read_reg(LSM6DSV_CTRL2) != 0 ||
+        read_reg(LSM6DSV_CTRL8) != 0 || read_reg(LSM6DSV_CTRL1) != 0x06u ||
+        (detected_id == 0x73u && read_reg(LSM6DSV320X_CTRL1_XL_HG) != 0)) return false;
+    detected_model = detected_id == 0x70u ? LSM6DSV_MODEL_LSM6DSV : LSM6DSV_MODEL_LSM6DSV320X;
+    sleep_ms(20); // allow fresh live samples before calibration/lab consumers
     return true;
 }
 
 bool lsm6dsv_read_accel(int16_t *x, int16_t *y, int16_t *z) {
+    if (detected_model == LSM6DSV_MODEL_UNKNOWN) return false;
     uint8_t tx[7] = { (uint8_t)(LSM6DSV_OUTX_L_A | 0x80u), 0, 0, 0, 0, 0, 0 };
     uint8_t rx[sizeof tx] = {0};
     select_imu(true);
@@ -118,6 +168,7 @@ bool lsm6dsv_read_accel(int16_t *x, int16_t *y, int16_t *z) {
 }
 
 bool lsm6dsv_gyro_start(void) {
+    if (detected_model == LSM6DSV_MODEL_UNKNOWN) return false;
     // BDU prevents mixed low/high bytes; IF_INC supports XYZ burst reads.
     write_reg(LSM6DSV_CTRL3, read_reg(LSM6DSV_CTRL3) | 0x44u);
     write_reg(LSM6DSV_CTRL6, 0x04u); // +/-2000 deg/s (70 mdps/count)
@@ -125,9 +176,12 @@ bool lsm6dsv_gyro_start(void) {
     return read_reg(LSM6DSV_CTRL2) == 0x07u && read_reg(LSM6DSV_CTRL6) == 0x04u;
 }
 
-void lsm6dsv_gyro_stop(void) { write_reg(LSM6DSV_CTRL2, 0x00u); }
+void lsm6dsv_gyro_stop(void) {
+    if (detected_model != LSM6DSV_MODEL_UNKNOWN) write_reg(LSM6DSV_CTRL2, 0x00u);
+}
 
 bool lsm6dsv_read_gyro(int16_t *x, int16_t *y, int16_t *z) {
+    if (detected_model == LSM6DSV_MODEL_UNKNOWN) return false;
     if (!(read_reg(LSM6DSV_STATUS_REG) & 0x02u)) return false;
     uint8_t tx[7] = { (uint8_t)(LSM6DSV_OUTX_L_G | 0x80u), 0, 0, 0, 0, 0, 0 };
     uint8_t rx[sizeof tx] = {0};
@@ -142,7 +196,14 @@ bool lsm6dsv_read_gyro(int16_t *x, int16_t *y, int16_t *z) {
 }
 
 static bool fifo_start_config(uint8_t rate, uint8_t range) {
+    if (detected_model == LSM6DSV_MODEL_UNKNOWN) return false;
     lsm6dsv_orientation_stop();
+    dual_running = false;
+    if (detected_model == LSM6DSV_MODEL_LSM6DSV320X) {
+        write_reg(LSM6DSV320X_CTRL1_XL_HG, 0);
+        write_reg(LSM6DSV320X_COUNTER_BDR_REG1,
+                  read_reg(LSM6DSV320X_COUNTER_BDR_REG1) & ~0x08u);
+    }
     // Reset the FIFO, then configure it before enabling the high-rate sensor.
     write_reg(LSM6DSV_FIFO_CTRL4, 0x00u); // bypass mode
     write_reg(LSM6DSV_INT1_CTRL, 0x00u);
@@ -166,17 +227,25 @@ static bool fifo_start_config(uint8_t rate, uint8_t range) {
 uint8_t lsm6dsv_read_ctrl8(void) { return read_reg(LSM6DSV_CTRL8); }
 
 void lsm6dsv_fifo_stop(void) {
+    if (detected_model == LSM6DSV_MODEL_UNKNOWN) return;
     gpio_set_irq_enabled(IMU_INT1_PIN, GPIO_IRQ_EDGE_RISE, false);
     write_reg(LSM6DSV_INT1_CTRL, 0x00u);
     write_reg(LSM6DSV_FIFO_CTRL4, 0x00u); // bypass / discard unread FIFO data
+    if (detected_model == LSM6DSV_MODEL_LSM6DSV320X) {
+        write_reg(LSM6DSV320X_CTRL1_XL_HG, 0);
+        write_reg(LSM6DSV320X_COUNTER_BDR_REG1,
+                  read_reg(LSM6DSV320X_COUNTER_BDR_REG1) & ~0x08u);
+    }
+    dual_running = false;
     write_reg(LSM6DSV_CTRL8, 0x00u);      // restore +/-2 g
     write_reg(LSM6DSV_CTRL1, 0x06u);      // restore 120 Hz live readout
     fifo_irq_pending = false;
+    sleep_ms(20); // do not expose a stale +/-16g sample as a fresh +/-2g reading
 }
 
 size_t lsm6dsv_fifo_read(lsm6dsv_accel_sample_t *samples, size_t max_samples,
                          bool *overrun) {
-    if (!samples || max_samples == 0) return 0;
+    if (detected_model == LSM6DSV_MODEL_UNKNOWN || !samples || max_samples == 0) return 0;
     fifo_irq_pending = false;
     uint16_t available = fifo_level(overrun);
     if (available > max_samples) available = (uint16_t)max_samples;
@@ -190,10 +259,12 @@ bool lsm6dsv_fifo_irq_pending(void) {
     return fifo_irq_pending;
 }
 
-// Register addresses/bits follow ST's lsm6dsv-pid driver (exact LSM6DSV).
+// Shared SFLP addresses/bits checked against ST's lsm6dsv-pid and
+// lsm6dsv320x-pid drivers; high-g is not involved in orientation.
 // Embedded function registers require FUNC_CFG_ACCESS bit 7; always return
 // to the main bank before servicing any other IMU operation.
 bool lsm6dsv_orientation_start(void) {
+    if (detected_model == LSM6DSV_MODEL_UNKNOWN) return false;
     if (orientation_running) return true;
     for (size_t i = 0; i < sizeof orientation_regs; ++i)
         orientation_saved[i] = read_reg(orientation_regs[i]);
@@ -227,6 +298,80 @@ bool lsm6dsv_orientation_start(void) {
 
 bool lsm6dsv_fifo_start(void) { return fifo_start_config(0x0Bu, 0x03u); }
 bool lsm6dsv_beam_fifo_start(void) { return fifo_start_config(0x08u, 0x01u); }
+
+bool lsm6dsv_dual_fifo_active(void) { return dual_running; }
+lsm6dsv_dual_stats_t lsm6dsv_dual_fifo_stats(void) { return dual_stats; }
+
+bool lsm6dsv_drop_fifo_start(void) {
+    if (detected_model != LSM6DSV_MODEL_LSM6DSV320X) return lsm6dsv_fifo_start();
+    if (!lsm6dsv_fifo_start()) return false;
+    // Settle both sensors while FIFO is bypassed so startup samples cannot fill it.
+    write_reg(LSM6DSV_FIFO_CTRL4, 0);
+    write_reg(LSM6DSV320X_CTRL1_XL_HG, 0x34u); // ODR=6 (3840 Hz), FS=4 (+/-320g)
+    write_reg(LSM6DSV320X_COUNTER_BDR_REG1,
+              read_reg(LSM6DSV320X_COUNTER_BDR_REG1) | 0x08u);
+    if (read_reg(LSM6DSV320X_CTRL1_XL_HG) != 0x34u ||
+        !(read_reg(LSM6DSV320X_COUNTER_BDR_REG1) & 0x08u)) {
+        lsm6dsv_fifo_stop(); return false;
+    }
+    sleep_ms(100);
+    dual_stats = (lsm6dsv_dual_stats_t){0};
+    pending_mask = 0;
+    have_pair = false;
+    fifo_irq_pending = false;
+    dual_running = true;
+    write_reg(LSM6DSV_FIFO_CTRL4, 0x06u);
+    return true;
+}
+
+size_t lsm6dsv_dual_fifo_read(lsm6dsv_accel_pair_t *pairs, size_t capacity) {
+    if (!dual_running || !pairs || !capacity) return 0;
+    fifo_irq_pending = false;
+    uint16_t available = fifo_level(&dual_stats.overrun);
+    if (available > dual_stats.max_level) dual_stats.max_level = available;
+    if (dual_stats.overrun || dual_stats.sequence_errors || dual_stats.unexpected_tags ||
+        dual_stats.io_errors) return 0;
+    size_t count = 0;
+    for (uint16_t i = 0; i < available && count < capacity; ++i) {
+        uint8_t tx[8] = {LSM6DSV_FIFO_DATA_TAG | 0x80u}, rx[8] = {0};
+        select_imu(true);
+        int transferred = spi_write_read_blocking(IMU_SPI, tx, rx, sizeof tx);
+        select_imu(false);
+        if (transferred != sizeof tx) { ++dual_stats.io_errors; break; }
+        uint8_t tag = rx[1] >> 3, slot = (rx[1] >> 1) & 3u;
+        // AN6119 section 9.4: TAG_CNT identifies slots at the fastest batch rate.
+        // Configuration-change records at FIFO startup carry no acceleration.
+        if (tag == 0x05u && !have_pair && !pending_mask) continue;
+        if (tag != 0x02u && tag != 0x1Du) { ++dual_stats.unexpected_tags; break; }
+        if (tag == 0x02u) ++dual_stats.low_records; else ++dual_stats.high_records;
+        if (pending_mask && slot != pending_slot) {
+            if (have_pair) { ++dual_stats.sequence_errors; break; }
+            ++dual_stats.startup_discarded;
+            pending_mask = 0; // first slot may begin before both sources batch
+        }
+        if (!pending_mask) {
+            if (have_pair && slot != ((previous_slot + 1u) & 3u)) {
+                ++dual_stats.sequence_errors; break;
+            }
+            pending_slot = slot;
+        }
+        uint8_t mask = tag == 0x02u ? 1u : 2u;
+        if (pending_mask & mask) { ++dual_stats.sequence_errors; break; }
+        lsm6dsv_accel_sample_t *s = tag == 0x02u ? &pending_pair.low : &pending_pair.high;
+        s->x = (int16_t)((uint16_t)rx[2] | (uint16_t)rx[3] << 8);
+        s->y = (int16_t)((uint16_t)rx[4] | (uint16_t)rx[5] << 8);
+        s->z = (int16_t)((uint16_t)rx[6] | (uint16_t)rx[7] << 8);
+        pending_mask |= mask;
+        if (pending_mask == 3u) {
+            pairs[count++] = pending_pair;
+            pending_mask = 0;
+            previous_slot = slot;
+            have_pair = true;
+            ++dual_stats.pairs;
+        }
+    }
+    return count;
+}
 
 void lsm6dsv_orientation_stop(void) {
     if (!orientation_running) return;

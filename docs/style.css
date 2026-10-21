@@ -4,3 +4,9 @@
 
 .controls .tutorial-link{text-decoration:none;display:inline-block;white-space:nowrap}.tutorial-link:focus-visible{outline:3px solid #1769aa;outline-offset:3px}@media(max-width:1050px){.controls{flex-wrap:wrap}}
 #orientationCanvas[aria-busy="true"] canvas { visibility: hidden; }
+.sensor-note{margin:.1rem 0;font-size:.85rem;color:color-mix(in srgb,CanvasText 75%,Canvas)}
+.sensor-note:empty{display:none}
+.capture-warning{margin:.3rem 0;padding:.6rem;border-left:4px solid #b00020;background:color-mix(in srgb,Canvas 93%,#b00020);color:#b00020}
+.capture-warning[hidden],#sensorControls[hidden]{display:none}
+#sensorSource{max-width:11rem}
+.summary[hidden],#charts[hidden]{display:none}

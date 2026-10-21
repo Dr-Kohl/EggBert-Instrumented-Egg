@@ -10,7 +10,18 @@ typedef struct {
     int16_t z;
 } lsm6dsv_accel_sample_t;
 
-// Initializes the four-wire SPI interface and confirms the fixed 0x70 ID.
+typedef enum {
+    LSM6DSV_MODEL_UNKNOWN,
+    LSM6DSV_MODEL_LSM6DSV,
+    LSM6DSV_MODEL_LSM6DSV320X,
+} lsm6dsv_model_t;
+
+// One firmware supports either board. Identification remains available on failure;
+// model is UNKNOWN until reset and low-g configuration have been verified.
+lsm6dsv_model_t lsm6dsv_model(void);
+uint8_t lsm6dsv_device_id(void);
+const char *lsm6dsv_model_name(void);
+// Initializes four-wire SPI, identifies 0x70/0x73, resets and verifies live mode.
 bool lsm6dsv_init(void);
 
 // Reads raw signed acceleration counts. At the configured +/-2 g scale: 0.061 mg/LSB.
@@ -32,6 +43,22 @@ bool lsm6dsv_orientation_read(lsm6dsv_quaternion_t *quaternion, bool *overrun);
 // Starts FIFO acquisition of accelerometer-only samples at 3.84 kHz and +/-16 g.
 // FIFO watermark and overrun are routed to IMU_INT1_PIN.
 bool lsm6dsv_fifo_start(void);
+// Drop recording: v1 stays low-g only; v2 adds +/-320 g at the same 3840 Hz.
+bool lsm6dsv_drop_fifo_start(void);
+bool lsm6dsv_dual_fifo_active(void);
+typedef struct {
+    lsm6dsv_accel_sample_t low, high;
+} lsm6dsv_accel_pair_t;
+typedef struct {
+    uint32_t low_records, high_records, pairs, startup_discarded;
+    uint32_t sequence_errors, unexpected_tags, io_errors;
+    uint16_t max_level;
+    bool overrun;
+} lsm6dsv_dual_stats_t;
+// Returns complete pairs with identical FIFO time-slot tags. A fault latches;
+// callers must stop rather than silently joining samples across a data gap.
+size_t lsm6dsv_dual_fifo_read(lsm6dsv_accel_pair_t *pairs, size_t capacity);
+lsm6dsv_dual_stats_t lsm6dsv_dual_fifo_stats(void);
 // Beam acquisition: 480 Hz, +/-4 g, same accelerometer-only FIFO.
 bool lsm6dsv_beam_fifo_start(void);
 

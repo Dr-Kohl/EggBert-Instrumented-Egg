@@ -11,6 +11,7 @@
 #include "hardware/regs/addressmap.h"
 #include "hardware/sync.h"
 #include "lsm6dsv.h"
+#include "egg_format.h"
 #include "gyro_session.h"
 #include "beam_trigger.h"
 #include "beam_frequency.h"
@@ -88,6 +89,17 @@ static const uint BUTTONS[] = {BUTTON_3_PIN, BUTTON_2_PIN, BUTTON_1_PIN};
 // 19,200 samples x 3 axes x 16 bits = 115,200 bytes.  This is intentionally
 // RAM-only for the first capture bring-up; no flash writes occur.
 static lsm6dsv_accel_sample_t capture_samples[CAPTURE_MAX_SAMPLES];
+static lsm6dsv_accel_sample_t capture_high_samples[CAPTURE_MAX_SAMPLES];
+static lsm6dsv_accel_pair_t fifo_pairs[32];
+static lsm6dsv_accel_pair_t capture_raw_pair;
+static bool capture_has_highg, capture_dual_failed, capture_diagnostic, capture_diagnostic_roll;
+static uint32_t capture_diagnostic_seen;
+static lsm6dsv_dual_stats_t capture_dual_stats;
+static uint64_t capture_started_us, capture_elapsed_us;
+static egg2_metadata_t capture_metadata;
+_Static_assert(sizeof(lsm6dsv_accel_sample_t) == 6, "Packed XYZ must be six bytes");
+_Static_assert(sizeof capture_samples + sizeof capture_high_samples == 230400,
+               "Five-second dual recording buffer budget changed");
 static lsm6dsv_accel_sample_t fifo_samples[64];
 static size_t capture_count;
 static size_t capture_write_index;
@@ -280,12 +292,7 @@ static void calibration_load(void) {
 
 static int16_t calibration_correct_axis(int16_t raw, unsigned axis, uint32_t counts_per_g) {
     if (!calibration_valid) return raw;
-    int32_t offset = (int32_t)(((int64_t)calibration.offset_live_counts[axis] * counts_per_g) /
-                               LIVE_ACCEL_COUNTS_PER_G);
-    int64_t corrected = ((int64_t)(raw - offset) * calibration.scale_q16[axis] + 32768) >> 16;
-    if (corrected > INT16_MAX) return INT16_MAX;
-    if (corrected < INT16_MIN) return INT16_MIN;
-    return (int16_t)corrected;
+    return egg_correct_low(raw, calibration.offset_live_counts[axis], calibration.scale_q16[axis], counts_per_g);
 }
 
 static void calibration_apply_capture_sample(lsm6dsv_accel_sample_t *sample) {
@@ -1147,6 +1154,20 @@ static const char *capture_state_name(void) {
 }
 
 static void print_capture_status(void) {
+    printf("IMU: %s, WHO_AM_I=0x%02X, stored high-g: %s, OLED: %s\n",
+           lsm6dsv_model_name(), lsm6dsv_device_id(), capture_has_highg ? "yes" : "no",
+           oled_ok ? "OK" : "NOT FOUND");
+    if (capture_has_highg) {
+        lsm6dsv_dual_stats_t s = lsm6dsv_dual_fifo_active() ?
+            lsm6dsv_dual_fifo_stats() : capture_dual_stats;
+        printf("Dual: low=%lu high=%lu pairs=%lu startup_discard=%lu sequence_errors=%lu "
+               "unexpected_tags=%lu io_errors=%lu max_fifo=%u elapsed_us=%llu integrity=%s\n",
+               (unsigned long)s.low_records, (unsigned long)s.high_records,
+               (unsigned long)s.pairs, (unsigned long)s.startup_discarded,
+               (unsigned long)s.sequence_errors, (unsigned long)s.unexpected_tags,
+               (unsigned long)s.io_errors, s.max_level,
+               (unsigned long long)capture_elapsed_us, capture_dual_failed ? "FAILED" : "OK");
+    }
     printf("Capture: %s, %lu/%u ring samples, FIFO overrun: %s",
            capture_state_name(),
            (unsigned long)capture_count, (unsigned)capture_target,
@@ -1167,6 +1188,17 @@ static const lsm6dsv_accel_sample_t *capture_sample_at(size_t chronological_inde
     return &capture_samples[physical_index];
 }
 
+static lsm6dsv_accel_sample_t legacy_sample_at(size_t index) {
+    lsm6dsv_accel_sample_t s = *capture_sample_at(index);
+    // Dual captures retain raw counts; preserve the existing calibrated EGG1 export.
+    if (capture_has_highg) {
+        s.x=egg_correct_low(s.x,capture_metadata.offset_live[0],capture_metadata.scale_q16[0],capture_scale);
+        s.y=egg_correct_low(s.y,capture_metadata.offset_live[1],capture_metadata.scale_q16[1],capture_scale);
+        s.z=egg_correct_low(s.z,capture_metadata.offset_live[2],capture_metadata.scale_q16[2],capture_scale);
+    }
+    return s;
+}
+
 static uint32_t crc32_byte(uint32_t crc, uint8_t value) {
     crc ^= value;
     for (unsigned bit = 0; bit < 8; ++bit)
@@ -1177,7 +1209,8 @@ static uint32_t crc32_byte(uint32_t crc, uint8_t value) {
 static uint32_t capture_payload_crc32(void) {
     uint32_t crc = 0xffffffffu;
     for (size_t i = 0; i < capture_count; ++i) {
-        const lsm6dsv_accel_sample_t *sample = capture_sample_at(i);
+        lsm6dsv_accel_sample_t corrected = legacy_sample_at(i);
+        const lsm6dsv_accel_sample_t *sample = &corrected;
         uint16_t values[] = { (uint16_t)sample->x, (uint16_t)sample->y, (uint16_t)sample->z };
         for (unsigned axis = 0; axis < 3; ++axis) {
             crc = crc32_byte(crc, (uint8_t)values[axis]);
@@ -1199,11 +1232,13 @@ static void write_u32(uint32_t value) {
     write_u16((uint16_t)(value >> 16));
 }
 
+static void download_dual_capture(void);
 static void download_capture(void) {
     if (!capture_complete) {
         printf("ERROR: capture is not complete; finish or stop it before download.\n");
         return;
     }
+    if (capture_has_highg) { download_dual_capture(); return; }
 
     uint8_t flags = 0;
     if (trigger_detected) flags |= EGG_FLAG_TRIGGERED;
@@ -1236,10 +1271,86 @@ static void download_capture(void) {
     write_u32(payload_crc);
 
     for (size_t i = 0; i < capture_count; ++i) {
-        const lsm6dsv_accel_sample_t *sample = capture_sample_at(i);
+        lsm6dsv_accel_sample_t corrected = legacy_sample_at(i);
+        const lsm6dsv_accel_sample_t *sample = &corrected;
         write_u16((uint16_t)sample->x);
         write_u16((uint16_t)sample->y);
         write_u16((uint16_t)sample->z);
+    }
+    stdio_flush();
+}
+
+// Engineering-only raw export; intentionally a different magic from website EGG1.
+// Header: EGD2, version/flags/u16 size, u32 rate/count/low ug/high ug/stride/CRC.
+// Payload: signed int16 low XYZ then high XYZ for each shared time slot.
+static void download_dual_raw(void) {
+    if (capture_active || !capture_complete || !capture_has_highg) {
+        printf("ERROR: no completed dual capture.\n"); return;
+    }
+    uint32_t crc = 0xffffffffu;
+    for (size_t i = 0; i < capture_count; ++i) {
+        size_t physical = (capture_first_index() + i) % CAPTURE_MAX_SAMPLES;
+        const lsm6dsv_accel_sample_t *s[2] = {&capture_samples[physical], &capture_high_samples[physical]};
+        for (unsigned sensor = 0; sensor < 2; ++sensor) {
+            uint16_t v[3] = {(uint16_t)s[sensor]->x,(uint16_t)s[sensor]->y,(uint16_t)s[sensor]->z};
+            for (unsigned a = 0; a < 3; ++a) {
+                crc = crc32_byte(crc,(uint8_t)v[a]); crc = crc32_byte(crc,(uint8_t)(v[a] >> 8));
+            }
+        }
+    }
+    printf("DUAL RAW %lu PAIRED SAMPLES - BINARY FOLLOWS\n", (unsigned long)capture_count);
+    stdio_flush();
+    write_u8('E'); write_u8('G'); write_u8('D'); write_u8('2');
+    write_u8(1); write_u8((capture_fifo_overrun ? 1u : 0u) | (capture_dual_failed ? 2u : 0u));
+    write_u16(32); write_u32(capture_rate); write_u32((uint32_t)capture_count);
+    write_u32(488); write_u32(10417); write_u32(12); write_u32(~crc);
+    for (size_t i = 0; i < capture_count; ++i) {
+        size_t physical = (capture_first_index() + i) % CAPTURE_MAX_SAMPLES;
+        const lsm6dsv_accel_sample_t *s[2] = {&capture_samples[physical], &capture_high_samples[physical]};
+        for (unsigned sensor = 0; sensor < 2; ++sensor) {
+            write_u16((uint16_t)s[sensor]->x); write_u16((uint16_t)s[sensor]->y); write_u16((uint16_t)s[sensor]->z);
+        }
+    }
+    stdio_flush();
+}
+
+static void download_dual_capture(void) {
+    if (!capture_count || capture_active) {
+        printf("ERROR: no completed paired samples available.\n"); return;
+    }
+    egg2_metadata_t m=capture_metadata;
+    m.flags=(trigger_detected ? EGG_FLAG_TRIGGERED : 0u) |
+            (trigger_was_freefall ? EGG_FLAG_FREEFALL : 0u) |
+            (capture_fifo_overrun ? EGG_FLAG_FIFO_OVERRUN : 0u) |
+            (capture_dual_failed ? EGG_FLAG_INVALID : 0u);
+    m.rate=capture_rate; m.count=(uint32_t)capture_count; m.post=post_trigger_samples;
+    m.trigger=trigger_detected ? (uint32_t)((trigger_index+CAPTURE_MAX_SAMPLES-capture_first_index())%CAPTURE_MAX_SAMPLES) : 0xffffffffu;
+    uint32_t crc=0xffffffffu;
+    for (size_t i=0; i<capture_count; ++i) {
+        size_t physical=(capture_first_index()+i)%CAPTURE_MAX_SAMPLES;
+        const lsm6dsv_accel_sample_t *s[2]={&capture_samples[physical],&capture_high_samples[physical]};
+        for (unsigned sensor=0; sensor<2; ++sensor) {
+            int16_t values[3]={s[sensor]->x,s[sensor]->y,s[sensor]->z};
+            for (unsigned a=0; a<3; ++a) {
+                int32_t absolute=values[a]<0 ? -(int32_t)values[a] : values[a];
+                if (!sensor && absolute>=32563) m.flags|=EGG_FLAG_CLIPPED;
+                if (sensor && absolute>=30413) m.flags|=EGG_FLAG_HIGH_CLIPPED;
+                crc=crc32_byte(crc,(uint8_t)values[a]);
+                crc=crc32_byte(crc,(uint8_t)((uint16_t)values[a]>>8));
+            }
+        }
+    }
+    m.payload_crc=~crc;
+    uint8_t header[EGG2_HEADER_BYTES]; egg2_header(header,&m);
+    printf("DOWNLOAD %lu PAIRED SAMPLES - BINARY FOLLOWS\n",(unsigned long)capture_count);
+    stdio_flush();
+    for (size_t i=0; i<sizeof header; ++i) write_u8(header[i]);
+    for (size_t i=0; i<capture_count; ++i) {
+        size_t physical=(capture_first_index()+i)%CAPTURE_MAX_SAMPLES;
+        const lsm6dsv_accel_sample_t *s[2]={&capture_samples[physical],&capture_high_samples[physical]};
+        for (unsigned sensor=0; sensor<2; ++sensor) {
+            write_u16((uint16_t)s[sensor]->x); write_u16((uint16_t)s[sensor]->y); write_u16((uint16_t)s[sensor]->z);
+        }
     }
     stdio_flush();
 }
@@ -1261,6 +1372,16 @@ static void start_capture(void) {
         return;
     }
     capture_is_beam = false;
+    capture_has_highg = capture_dual_failed = capture_diagnostic = capture_diagnostic_roll = false;
+    capture_diagnostic_seen = 0;
+    capture_dual_stats = (lsm6dsv_dual_stats_t){0};
+    capture_elapsed_us = 0;
+    capture_metadata=(egg2_metadata_t){0};
+    for (unsigned a=0; a<3; ++a) {
+        capture_metadata.offset_live[a]=calibration_valid ? calibration.offset_live_counts[a] : 0;
+        capture_metadata.scale_q16[a]=calibration_valid ? calibration.scale_q16[a] : 65536u;
+    }
+    capture_metadata.calibration_generation=calibration_valid ? calibration.generation : 0;
     capture_clipped = false;
     capture_rate = CAPTURE_RATE_HZ;
     capture_scale = ACCEL_COUNTS_PER_G;
@@ -1276,16 +1397,33 @@ static void start_capture(void) {
     capture_complete = false;
     trigger_detected = false;
     trigger_was_freefall = false;
-    if (!lsm6dsv_fifo_start()) {
+    if (!lsm6dsv_drop_fifo_start()) {
         printf("ERROR: could not start IMU FIFO\n");
         return;
     }
     if (!verify_capture_range()) return;
+    capture_has_highg = lsm6dsv_dual_fifo_active();
+    capture_started_us = time_us_64();
+    capture_last_sample_ms = to_ms_since_boot(get_absolute_time());
     capture_active = true;
     capture_state = CAPTURE_WAIT_STILL;
     next_capture_poll = make_timeout_time_ms(5);
     show_capture_wait_still();
     printf("Capture armed from EggBert menu: hold still for one second, then wait for freefall or impact.\n");
+}
+
+static void start_dual_test(bool rolling) {
+    if (capture_active || capture_complete || ui_state != UI_HOME || orientation_fused ||
+        lsm6dsv_model() != LSM6DSV_MODEL_LSM6DSV320X) {
+        printf("ERROR: dualtest requires v2 at HOME, idle, and no protected capture.\n"); return;
+    }
+    start_capture();
+    if (!capture_active) return;
+    capture_diagnostic = true;
+    capture_diagnostic_roll = rolling;
+    capture_state = CAPTURE_POST_EVENT;
+    printf(rolling ? "DUALTEST: six seconds rolling, then retain 0.5 s before / 4.5 s after trigger.\n" :
+                     "DUALTEST: timed five-second raw recording; no throw required.\n");
 }
 
 static void beam_arm(void) {
@@ -1295,6 +1433,7 @@ static void beam_arm(void) {
         return;
     }
     capture_is_beam = true;
+    capture_has_highg = capture_dual_failed = capture_diagnostic = false;
     capture_clipped = false;
     capture_rate = BEAM_RATE_HZ;
     capture_scale = BEAM_COUNTS_PER_G;
@@ -1349,6 +1488,10 @@ static float estimate_beam_frequency(void) {
 
 static void finish_capture(const char *reason) {
     if (!capture_active) return;
+    if (capture_has_highg && lsm6dsv_dual_fifo_active()) {
+        capture_dual_stats = lsm6dsv_dual_fifo_stats();
+        capture_elapsed_us = time_us_64() - capture_started_us;
+    }
     lsm6dsv_fifo_stop();
     capture_active = false;
     capture_complete = true;
@@ -1370,6 +1513,7 @@ static void erase_capture(void) {
     capture_write_index = 0;
     capture_oldest_index = 0;
     capture_complete = false;
+    capture_has_highg = capture_dual_failed = capture_diagnostic = false;
     capture_fifo_overrun = false;
     trigger_detected = false;
     trigger_was_freefall = false;
@@ -1484,7 +1628,8 @@ static bool magnitude_between(uint64_t magnitude, uint32_t minimum, uint32_t max
 }
 
 static void store_capture_sample(const lsm6dsv_accel_sample_t *sample) {
-    capture_samples[capture_write_index] = *sample;
+    capture_samples[capture_write_index] = capture_has_highg ? capture_raw_pair.low : *sample;
+    if (capture_has_highg) capture_high_samples[capture_write_index] = capture_raw_pair.high;
     capture_write_index = (capture_write_index + 1u) % CAPTURE_MAX_SAMPLES;
     if (capture_count < CAPTURE_MAX_SAMPLES) ++capture_count;
     else capture_oldest_index = (capture_oldest_index + 1u) % CAPTURE_MAX_SAMPLES;
@@ -1593,6 +1738,23 @@ static void process_capture_sample(const lsm6dsv_accel_sample_t *sample) {
         process_gentle_sample(sample);
         return;
     }
+    if (capture_diagnostic) {
+        store_capture_sample(sample);
+        if (capture_diagnostic_roll) {
+            ++capture_diagnostic_seen;
+            if (capture_diagnostic_seen == CAPTURE_RATE_HZ) show_capture_armed();
+            if (capture_diagnostic_seen == 6u * CAPTURE_RATE_HZ) {
+                trigger_detected = true;
+                trigger_index = (capture_write_index + CAPTURE_MAX_SAMPLES - 1u) % CAPTURE_MAX_SAMPLES;
+                retain_pretrigger_window();
+                post_trigger_samples = 0;
+                show_capture_event(); // exercise the same OLED latency as a real trigger
+            } else if (trigger_detected && ++post_trigger_samples == POST_TRIGGER_SAMPLES) {
+                finish_capture("dual rolling pretrigger window complete");
+            }
+        } else if (capture_count == CAPTURE_MAX_SAMPLES) finish_capture("dual timed window complete");
+        return;
+    }
     store_capture_sample(sample);
     uint64_t magnitude = magnitude_squared(sample);
 
@@ -1630,6 +1792,11 @@ static void process_capture_sample(const lsm6dsv_accel_sample_t *sample) {
 
 static void service_capture(void) {
     if (!capture_active) return;
+    if (lsm6dsv_dual_fifo_active() &&
+        to_ms_since_boot(get_absolute_time()) - capture_last_sample_ms > 1500u) {
+        capture_dual_failed = true;
+        finish_capture("ERROR dual sensor timeout"); return;
+    }
     if (capture_is_beam && ui_state == UI_BEAM &&
         to_ms_since_boot(get_absolute_time())-capture_last_sample_ms>1500u) {
         lsm6dsv_fifo_stop(); capture_active=false; capture_count=0;
@@ -1645,6 +1812,24 @@ static void service_capture(void) {
     next_capture_poll = make_timeout_time_ms(5);
 
     while (capture_active) {
+        if (lsm6dsv_dual_fifo_active()) {
+            size_t count = lsm6dsv_dual_fifo_read(fifo_pairs, 32u);
+            lsm6dsv_dual_stats_t s = lsm6dsv_dual_fifo_stats();
+            if (s.overrun || s.sequence_errors || s.unexpected_tags || s.io_errors) {
+                capture_fifo_overrun = s.overrun;
+                capture_dual_failed = true;
+                finish_capture("ERROR dual FIFO integrity"); break;
+            }
+            if (!count) break;
+            capture_last_sample_ms = to_ms_since_boot(get_absolute_time());
+            for (size_t i = 0; i < count && capture_active; ++i) {
+                capture_raw_pair = fifo_pairs[i];
+                lsm6dsv_accel_sample_t corrected = fifo_pairs[i].low;
+                calibration_apply_capture_sample(&corrected);
+                process_capture_sample(&corrected);
+            }
+            continue;
+        }
         bool overrun = false;
         size_t read = lsm6dsv_fifo_read(fifo_samples, 64u, &overrun);
         if (overrun) capture_fifo_overrun = true;
@@ -1700,6 +1885,12 @@ static void handle_serial_command(void) {
                 printf("ERROR: capture control is on EggBert; serial stop is disabled.\n");
             } else if (strcmp(command, "status") == 0) {
                 print_capture_status();
+            } else if (strcmp(command, "dualtest") == 0) {
+                start_dual_test(false);
+            } else if (strcmp(command, "dualtest ring") == 0) {
+                start_dual_test(true);
+            } else if (strcmp(command, "download raw") == 0) {
+                download_dual_raw();
             } else if (strcmp(command, "download") == 0) {
                 stop_orientation();
                 download_capture();
@@ -1721,7 +1912,7 @@ static void handle_serial_command(void) {
             } else if (strcmp(command, "clear") == 0) {
                 printf("ERROR: erase captures using the EggBert menu.\n");
             } else if (strcmp(command, "help") == 0) {
-                printf("Commands: status, download, orientation fused/on/off, help. Capture control uses the EggBert menu.\n");
+                printf("Commands: status, download, orientation fused/on/off, dualtest [ring], download raw, help. Normal capture control uses the EggBert menu.\n");
             } else {
                 printf("Unknown command: %s (type help)\n", command);
             }
@@ -1911,7 +2102,8 @@ int main(void) {
     sample_power();
     bool imu_ok = lsm6dsv_init();
     calibration_load();
-    printf("LSM6DSV SPI WHO_AM_I: %s\n", imu_ok ? "0x70 OK" : "NOT FOUND");
+    printf("IMU: %s, SPI WHO_AM_I=0x%02X, %s; dual drop capture available on v2\n",
+           lsm6dsv_model_name(), lsm6dsv_device_id(), imu_ok ? "OK" : "INIT FAILED");
     if (oled_ok) {
         ui_begin("BOOT", imu_ok ? "I" : "X");
         ssd1306_ui_text(18, 36, imu_ok ? "IMU OK" : "IMU BAD", true);

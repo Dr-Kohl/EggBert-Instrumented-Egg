@@ -1,54 +1,102 @@
 "use strict";
 
-const HEADER_BYTES = 32, MAGIC = [0x45, 0x47, 0x47, 0x31];
-const FLAG_TRIGGERED = 1, FLAG_FREEFALL = 2, FLAG_FIFO_OVERRUN = 4, FLAG_BEAM = 8, FLAG_CLIPPED = 16;
+const HEADER_BYTES = 32, MAGIC = [0x45, 0x47, 0x47];
+const FLAG_TRIGGERED = 1, FLAG_FREEFALL = 2, FLAG_FIFO_OVERRUN = 4, FLAG_BEAM = 8, FLAG_CLIPPED = 16, FLAG_INVALID = 32, FLAG_HIGH_CLIPPED = 64;
 let port, activeReader, capture, captureBytes, showLabels = true, orientationActive = false, orientationView;
 let orientationHeading = 0, orientationLatest, orientationReady = false;
 let viewStart = 0, viewSeconds = 0, drag, chartMode = "axes";
 let verticalScale = "auto", fittedDomains, fullDomains;
 let measuring = false, cursors = [null, null];
+let sensorSource = "low";
 const PLOT = { left: 58, right: 18, top: 18, bottom: 32 };
 const $ = selector => document.querySelector(selector);
 const setStatus = text => { $("#connectionStatus").textContent = text; };
 const setError = (text = "") => { $("#errorStatus").textContent = text; };
 
 function concat(first, second) { const all = new Uint8Array(first.length + second.length); all.set(first); all.set(second, first.length); return all; }
-function findMagic(bytes) { for (let i = 0; i <= bytes.length - 4; i += 1) if (MAGIC.every((value, offset) => bytes[i + offset] === value)) return i; return -1; }
+function isEggMagic(bytes, start = 0) { return MAGIC.every((v,i)=>bytes[start+i]===v) && [0x31,0x32].includes(bytes[start+3]); }
+function findMagic(bytes) { for (let i = 0; i <= bytes.length - 4; i += 1) if (isEggMagic(bytes,i)) return i; return -1; }
 function crc32(bytes) { let crc = 0xffffffff; for (const value of bytes) { crc ^= value; for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0); } return (~crc) >>> 0; }
 
-function parseEgg(bytes) {
-  if (bytes.length < HEADER_BYTES || !MAGIC.every((value, i) => bytes[i] === value)) throw new Error("This is not an EggBert .egg file.");
+function captureLayout(bytes) {
+  if (bytes.length < HEADER_BYTES || !isEggMagic(bytes)) throw new Error("This is not an EggBert .egg file.");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const version = view.getUint8(4), flags = view.getUint8(5), headerBytes = view.getUint16(6, true);
   const sampleRate = view.getUint32(8, true), sampleCount = view.getUint32(12, true), triggerOffset = view.getUint32(16, true), postSamples = view.getUint32(20, true);
   const countsPerG = view.getUint16(24, true), sampleBytes = view.getUint16(26, true), expectedCrc = view.getUint32(28, true);
-  if (version !== 1 || headerBytes !== HEADER_BYTES || sampleBytes !== 6 || countsPerG === 0) throw new Error("Unsupported EggBert file format.");
+  const dual = bytes[3] === 0x32;
+  if ((!dual && (version!==1 || headerBytes!==32 || sampleBytes!==6)) ||
+      (dual && (version!==2 || headerBytes!==80 || sampleBytes!==12 || countsPerG!==2048)) ||
+      !countsPerG || !sampleRate || sampleRate>100000 || !sampleCount || sampleCount>1000000 ||
+      (triggerOffset!==0xffffffff && triggerOffset>=sampleCount) || postSamples>sampleCount)
+    throw new Error("Unsupported or invalid EggBert file metadata.");
+  return {view,version,flags,headerBytes,sampleRate,sampleCount,triggerOffset,postSamples,countsPerG,sampleBytes,expectedCrc,dual};
+}
+
+function correctLowCount(raw, offsetLive, scaleQ16, countsPerG, liveCountsPerG) {
+  const offset = Math.trunc(offsetLive*countsPerG/liveCountsPerG);
+  return clamp(Math.floor(((raw-offset)*scaleQ16+32768)/65536),-32768,32767);
+}
+function parseEgg(bytes) {
+  const {view,version,flags,headerBytes,sampleRate,sampleCount,triggerOffset,postSamples,countsPerG,sampleBytes,expectedCrc,dual}=captureLayout(bytes);
   const totalBytes = headerBytes + sampleCount * sampleBytes;
   if (bytes.length !== totalBytes) throw new Error(`Incomplete capture: expected ${totalBytes} bytes, received ${bytes.length}.`);
-  const x = new Float32Array(sampleCount), y = new Float32Array(sampleCount), z = new Float32Array(sampleCount), magnitude = new Float32Array(sampleCount);
-  for (let i = 0; i < sampleCount; i += 1) { const offset = headerBytes + i * sampleBytes; x[i] = view.getInt16(offset, true) / countsPerG; y[i] = view.getInt16(offset + 2, true) / countsPerG; z[i] = view.getInt16(offset + 4, true) / countsPerG; magnitude[i] = Math.hypot(x[i], y[i], z[i]); }
-  return { flags, sampleRate, sampleCount, triggerOffset, postSamples, fullScaleG: 32768 / countsPerG, x, y, z, magnitude, validCrc: crc32(bytes.slice(headerBytes)) === expectedCrc };
+  let highScale, calibration;
+  if (dual) {
+    if (crc32(bytes.subarray(0,76))!==view.getUint32(76,true)) throw new Error("Capture header CRC verification failed.");
+    highScale=view.getUint32(32,true)/1e6;
+    calibration={offsets:[],scales:[],generation:view.getUint32(64,true),liveCountsPerG:view.getUint32(68,true)};
+    for (let a=0;a<3;a++) { calibration.offsets.push(view.getInt32(40+4*a,true)); calibration.scales.push(view.getUint32(52+4*a,true)); }
+    if (view.getUint16(36,true)!==0x73 || view.getUint16(38,true)!==320 || highScale!==0.010417 ||
+        calibration.liveCountsPerG!==16384 || view.getUint32(72,true)!==0 ||
+        calibration.scales.some(v=>v<32768 || v>131072)) throw new Error("Unsupported dual-sensor metadata.");
+  }
+  const makeStream = range => ({x:new Float32Array(sampleCount),y:new Float32Array(sampleCount),z:new Float32Array(sampleCount),magnitude:new Float32Array(sampleCount),fullScaleG:range,clipped:new Uint8Array(sampleCount)});
+  const low=makeStream(32768/countsPerG), high=dual ? makeStream(320) : undefined;
+  const rawLow=dual ? new Int16Array(sampleCount*3) : undefined, rawHigh=dual ? new Int16Array(sampleCount*3) : undefined;
+  for (let i=0;i<sampleCount;i++) {
+    const offset=headerBytes+i*sampleBytes;
+    for (const [a,axis] of ["x","y","z"].entries()) {
+      const raw=view.getInt16(offset+2*a,true);
+      low[axis][i]=(dual ? correctLowCount(raw,calibration.offsets[a],calibration.scales[a],countsPerG,calibration.liveCountsPerG) : raw)/countsPerG;
+      if (Math.abs(raw)>=32563) low.clipped[i]=1;
+      if (dual) {
+        const h=view.getInt16(offset+6+2*a,true); rawLow[3*i+a]=raw; rawHigh[3*i+a]=h;
+        high[axis][i]=h*highScale;
+        if (Math.abs(h)>=30413) high.clipped[i]=1;
+      }
+    }
+    low.magnitude[i]=Math.hypot(low.x[i],low.y[i],low.z[i]);
+    if (dual) high.magnitude[i]=Math.hypot(high.x[i],high.y[i],high.z[i]);
+  }
+  return {version,flags,sampleRate,sampleCount,triggerOffset,postSamples,countsPerG,dual,low,high,rawLow,rawHigh,calibration,
+          fullScaleG:low.fullScaleG,x:low.x,y:low.y,z:low.z,magnitude:low.magnitude,validCrc:crc32(bytes.subarray(headerBytes))===expectedCrc};
 }
 
 function detectFlight() {
-  if (capture.flags & FLAG_BEAM) return undefined;
   if (!capture) return undefined;
+  if (capture.flags & (FLAG_BEAM|FLAG_FIFO_OVERRUN|FLAG_INVALID) || !capture.validCrc) return undefined;
+  const motion=capture.low || capture;
   const freefallThreshold = 0.4, impactThreshold = 4;
   const minimumFreefallSamples = Math.max(1, Math.round(capture.sampleRate * 0.08));
   const minimumFlightSamples = Math.max(1, Math.round(capture.sampleRate * 0.3));
   for (let startIndex = 0; startIndex <= capture.sampleCount - minimumFreefallSamples; startIndex += 1) {
     let sustainedFreefall = true;
     for (let index = startIndex; index < startIndex + minimumFreefallSamples; index += 1)
-      if (capture.magnitude[index] >= freefallThreshold) { sustainedFreefall = false; break; }
+      if (motion.magnitude[index] >= freefallThreshold) { sustainedFreefall = false; break; }
     if (!sustainedFreefall) continue;
     for (let impactIndex = startIndex + minimumFlightSamples; impactIndex < capture.sampleCount; impactIndex += 1)
-      if (capture.magnitude[impactIndex] > impactThreshold) return { startIndex, impactIndex };
+      if (motion.magnitude[impactIndex] > impactThreshold) return { startIndex, impactIndex };
   }
   return undefined;
 }
 
 function displayCapture(bytes) {
   capture = parseEgg(bytes); captureBytes = bytes;
+  sensorSource="low"; $("#sensorSource").value="low";
+  $("#sensorControls").hidden=!capture.dual;
+  $("#sensorSource").disabled=!capture.dual;
+  $("#sensorNote").textContent=capture.dual ? "Low-g shows small motions; high-g records stronger impacts. High-g uses factory scaling; low-g user calibration does not apply to it." : "";
   chartMode = "axes";
   verticalScale = "auto"; fittedDomains = undefined;
   fullDomains = { axes: domainFor([capture.x, capture.y, capture.z], 0, capture.sampleCount - 1, true), magnitude: domainFor([capture.magnitude], 0, capture.sampleCount - 1, false) };
@@ -59,7 +107,7 @@ function displayCapture(bytes) {
   $("#sampleCount").textContent = `${capture.sampleCount.toLocaleString()} samples`;
   $("#sampleRate").textContent = `${capture.sampleRate.toLocaleString()} Hz`;
   const trigger = (capture.flags & FLAG_TRIGGERED) ? ((capture.flags & FLAG_BEAM) ? "Beam flick" : (capture.flags & FLAG_FREEFALL) ? "Freefall" : "Impact") : "No event";
-  $("#triggerType").textContent = trigger + ((capture.flags & FLAG_FIFO_OVERRUN) ? " · FIFO overrun" : "") + ((capture.flags & FLAG_CLIPPED) ? " · Clipped" : "");
+  $("#triggerType").textContent = trigger + ((capture.flags & FLAG_FIFO_OVERRUN) ? " · FIFO overrun" : "") + ((capture.flags & FLAG_INVALID) ? " · Incomplete / sample error" : "") + ((capture.flags & FLAG_CLIPPED) ? (capture.dual ? " · Low-g clipped" : " · Clipped") : "") + ((capture.flags & FLAG_HIGH_CLIPPED) ? " · High-g clipped" : "");
   const flight = detectFlight();
   if (flight) {
     const seconds = (flight.impactIndex - flight.startIndex) / capture.sampleRate;
@@ -70,9 +118,23 @@ function displayCapture(bytes) {
     $("#flightTime").textContent = "Not detected";
     $("#peakHeight").textContent = "—";
   }
-  $("#integrity").textContent = capture.validCrc ? "CRC verified" : "CRC FAILED";
-  $("#integrity").style.color = capture.validCrc ? "" : "#b00020";
+  const good=capture.validCrc && !(capture.flags & (FLAG_FIFO_OVERRUN|FLAG_INVALID));
+  $("#integrity").textContent = !capture.validCrc ? "CRC FAILED" : good ? (capture.dual ? "Header + data CRC verified" : "CRC verified") : "Data loss — CRC verified";
+  $("#integrity").style.color = good ? "" : "#b00020";
+  $("#captureWarning").hidden=good;
+  $("#captureWarning").textContent=!capture.validCrc ? "Transfer integrity failed. Retry the download before using these measurements." : "This recording reports lost or incomplete samples. Timing and peak measurements may be unreliable.";
   $("#saveButton").disabled = false; $("#saveCsvButton").disabled = false; drawAll();
+}
+
+function selectSensor(source) {
+  if (!capture || !["low","high"].includes(source) || (source==="high" && !capture.high)) return;
+  sensorSource=source;
+  $("#sensorSource").value=source;
+  const stream=capture[source];
+  for (const key of ["x","y","z","magnitude","fullScaleG"]) capture[key]=stream[key];
+  verticalScale="auto"; fittedDomains=undefined; $("#verticalScale").value="auto";
+  fullDomains={axes:domainFor([stream.x,stream.y,stream.z],0,capture.sampleCount-1,true),magnitude:domainFor([stream.magnitude],0,capture.sampleCount-1,false)};
+  drawAll();
 }
 
 function captureSeconds() { return capture ? capture.sampleCount / capture.sampleRate : 0; }
@@ -139,9 +201,9 @@ function drawAll() {
   if (!capture) return;
   const events = detectEvents(), domain = currentDomain();
   $("#scaleReadout").textContent = `${domain[0]} to ${domain[1]} g`;
-  for (const option of $("#verticalScale").options) if (["2", "4", "8", "16"].includes(option.value)) option.textContent = chartMode === "axes" ? `±${option.value} g` : `0–${option.value} g`;
+  for (const option of $("#verticalScale").options) if (Number(option.value)>0) option.textContent = chartMode === "axes" ? `±${option.value} g` : `0–${option.value} g`;
   const axes = chartMode === "axes";
-  $("#chartTitle").textContent = axes ? "Acceleration" : "Acceleration magnitude";
+  $("#chartTitle").textContent = (capture.dual ? (sensorSource==="high" ? "High-g · " : "Low-g · ") : "") + (axes ? "Acceleration" : "Acceleration magnitude");
   $("#chartLegend").hidden = !axes;
   $("#captureChart").setAttribute("aria-label", `${axes ? "Acceleration X, Y, and Z" : "Acceleration magnitude"} in g over time. Scroll to zoom. ${measuring ? "Click to place and drag measurement cursors." : "Drag to pan."}`);
   drawPlot($("#captureChart"), axes ? [capture.x, capture.y, capture.z] : [capture.magnitude], domain, axes ? ["#c33", "#17834d", "#2463c5"] : ["#6240a0"], "g", events);
@@ -150,13 +212,13 @@ function drawAll() {
 function detectEvents() {
   const events = [];
   const beam = !!(capture.flags & FLAG_BEAM);
-  const saturation = beam ? capture.fullScaleG * (32700 / 32768) : 15.9;
+  const saturation = capture.dual && sensorSource==="high" ? 320*0.99 : beam ? capture.fullScaleG * (32700 / 32768) : 15.9;
   const add = (index, label, color) => { if (index < 0 || index >= capture.sampleCount) return; const nearby = events.find(event => Math.abs(event.index - index) < Math.max(1, capture.sampleRate * 0.04)); if (nearby) { if (!nearby.label.includes(label)) nearby.label += " / " + label; if (color === "#b00020") nearby.color = color; } else events.push({ index, label, color }); };
   if (capture.triggerOffset !== 0xffffffff && capture.triggerOffset < capture.sampleCount) add(capture.triggerOffset, "Trigger", "#7a5f00");
   let peakIndex = 0, peak = 0;
   for (let i = 0; i < capture.sampleCount; i += 1) {
     if (capture.magnitude[i] > peak) { peak = capture.magnitude[i]; peakIndex = i; }
-    if (Math.abs(capture.x[i]) >= saturation || Math.abs(capture.y[i]) >= saturation || Math.abs(capture.z[i]) >= saturation) add(i, "Saturation", "#b00020");
+    if (capture.dual ? capture[sensorSource].clipped[i] : (Math.abs(capture.x[i]) >= saturation || Math.abs(capture.y[i]) >= saturation || Math.abs(capture.z[i]) >= saturation)) add(i, "Saturation", "#b00020");
   }
   const flight = detectFlight();
   if (flight) {
@@ -309,12 +371,15 @@ async function downloadCapture() {
   const reader = port.readable.getReader(); activeReader = reader; let received = new Uint8Array(), required = null, start = -1, verified = false;
   try {
     while (required === null || received.length - start < required) {
-      const result = await Promise.race([reader.read(), new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 10000))]);
+      let readTimer;
+      let result;
+      try { result=await Promise.race([reader.read(), new Promise(resolve => { readTimer=setTimeout(()=>resolve({timeout:true}),10000); })]); }
+      finally { clearTimeout(readTimer); }
       if (result.timeout) { await reader.cancel(); throw new Error("EggBert did not start a binary download. Confirm CAPTURE COMPLETE, then try again."); }
       const { value, done } = result; if (done) throw new Error("EggBert disconnected during transfer."); received = concat(received, value);
       if (start < 0) start = findMagic(received);
       if (start < 0) { const text = new TextDecoder().decode(received); if (text.includes("ERROR:")) throw new Error(text.trim()); }
-      if (start >= 0 && received.length >= start + HEADER_BYTES) { const view = new DataView(received.buffer, received.byteOffset + start, HEADER_BYTES); required = view.getUint16(6, true) + view.getUint32(12, true) * view.getUint16(26, true); setStatus(`Downloading ${required.toLocaleString()} bytes…`); }
+      if (start >= 0 && received.length >= start + HEADER_BYTES) { const layout=captureLayout(received.subarray(start)); required=layout.headerBytes+layout.sampleCount*layout.sampleBytes; setStatus(`Downloading ${required.toLocaleString()} bytes…`); }
     }
     displayCapture(received.slice(start, start + required));
     if (!capture.validCrc) throw new Error("Capture CRC verification failed. EggBert remains connected so you can retry the download.");
@@ -458,6 +523,7 @@ $("#sampleSelect").addEventListener("change", async event => { const filename = 
 $("#showLabels").addEventListener("click", event => { showLabels = !showLabels; event.currentTarget.setAttribute("aria-pressed", String(showLabels)); drawAll(); });
 $("#axesButton").addEventListener("click", () => setChartMode("axes"));
 $("#magnitudeButton").addEventListener("click", () => setChartMode("magnitude"));
+$("#sensorSource").addEventListener("change", event=>selectSensor(event.target.value));
 $("#focusEventButton").addEventListener("click", focusEvent);
 $("#resetZoomButton").addEventListener("click", () => { resetZoom(); drawAll(); });
 function downloadFile(blob, filename) {
@@ -489,10 +555,17 @@ async function saveCaptureFile(blob, extension, description, mimeType) {
   setStatus(`Saved ${handle.name}.`);
 }
 
-async function exportCsv() {
-  if (!capture) return;
-  const rows = ["Time (s),X (g),Y (g),Z (g),Magnitude (g)"];
+function captureCsvText() {
+  if (!capture) return "";
+  const rows = [capture.dual ? "Time (s),Low X (g),Low Y (g),Low Z (g),Low magnitude (g),High X (g),High Y (g),High Z (g),High magnitude (g),Low raw X (counts),Low raw Y (counts),Low raw Z (counts),High raw X (counts),High raw Y (counts),High raw Z (counts),Low clipped,High clipped,Capture valid" : "Time (s),X (g),Y (g),Z (g),Magnitude (g)"];
   for (let index = 0; index < capture.sampleCount; index += 1) {
+    if (capture.dual) {
+      const values=[(index/capture.sampleRate).toFixed(6)];
+      for (const stream of [capture.low,capture.high]) for (const key of ["x","y","z","magnitude"]) values.push(stream[key][index].toFixed(6));
+      for (const raw of [capture.rawLow,capture.rawHigh]) values.push(...raw.subarray(3*index,3*index+3));
+      values.push(capture.low.clipped[index],capture.high.clipped[index],Number(capture.validCrc && !(capture.flags & (FLAG_INVALID|FLAG_FIFO_OVERRUN))));
+      rows.push(values.join(",")); continue;
+    }
     rows.push([
       (index / capture.sampleRate).toFixed(6),
       capture.x[index].toFixed(6),
@@ -501,7 +574,11 @@ async function exportCsv() {
       capture.magnitude[index].toFixed(6),
     ].join(","));
   }
-  await saveCaptureFile(new Blob([rows.join("\r\n") + "\r\n"], { type: "text/csv;charset=utf-8" }), "csv", "CSV files", "text/csv");
+  return rows.join("\r\n")+"\r\n";
+}
+async function exportCsv() {
+  if (!capture) return;
+  await saveCaptureFile(new Blob([captureCsvText()], { type: "text/csv;charset=utf-8" }), "csv", "CSV files", "text/csv");
 }
 
 $("#saveButton").addEventListener("click", () => saveCaptureFile(new Blob([captureBytes], { type: "application/octet-stream" }), "egg", "EggBert capture files", "application/octet-stream").catch(error => { if (error.name !== "AbortError") setError(`Save failed: ${error.message}`); }));

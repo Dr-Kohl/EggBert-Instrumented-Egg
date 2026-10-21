@@ -1,5 +1,151 @@
 # EggBert RP2354A board bring-up
 
+## Shared firmware: version 1 and version 2 bring-up
+
+The same firmware now detects LSM6DSV (`WHO_AM_I=0x70`) or LSM6DSV320XTR
+(`0x73`) over the existing SPI wiring. Startup resets the identified IMU and
+verifies coherent burst reads, 120 Hz +/-2 g live acceleration, and the
+on-demand gyro configuration. Unrecognized IDs or failed configuration are
+reported as an initialization failure; sensor operations remain disabled.
+The USB startup message and `status` command identify the detected model.
+
+Version 2 now records **both accelerometers during Record / Drop Test**:
+low-g at +/-16 g and high-g at +/-320 g, both at nominal 3840 Hz. The same
+five-second window retains 19,200 paired XYZ readings per sensor. Version 1
+continues low-g recording. Accel, Level, Gyro, Pendulum, Friction, Beam,
+Gentle Catch and orientation keep their existing ranges, rates and units.
+High-g is powered down outside version 2 drop recordings. Normal downloads use
+EGG2 for paired recordings, preserving both raw streams plus low-g calibration;
+version 1 and Beam retain EGG1. The website opens both formats and provides a
+Low-g / High-g selector and CSV export of both streams. Automatic trace
+selection and extended Gentle Catch are future work.
+Register compatibility was checked against ST's official
+[LSM6DSV320X driver](https://github.com/STMicroelectronics/lsm6dsv320x-pid).
+
+Version 2 also adds a 3000 Hz-labeled buzzer driven by GPIO22 through an AO3400A
+low-side MOSFET, with a 10 kOhm gate pulldown and SS14 flyback diode to Out+.
+The user confirmed GPIO22 is unused on version 1, so future button sounds may
+drive the same pin on both boards. Initialize it low/off and use nonblocking
+sound timing. Confirm whether the buzzer is active or passive before selecting
+the waveform. See the supplied [speaker schematic](docs/hardware/speaker-gpio22-schematic.png).
+Button sounds are not implemented in this milestone.
+
+### Version 2 verification
+
+`tests/imu_driver_test.c` exercises the actual driver with a simulated SPI
+device: both IDs, startup retries, bounded reset, configuration verification,
+signed live reads, gyro freshness, low-g FIFO tags, overrun reporting, beam
+settings, orientation register restoration, and rejection of unknown devices.
+Build using the ARM compiler (PowerShell; run from this checkout):
+
+```powershell
+& "$toolchain/arm-none-eabi-gcc.exe" -std=c11 -Wall -Wextra -Werror -mcpu=cortex-m0plus -mthumb -mfloat-abi=soft -O2 -Itests/imu_stubs -Iinclude -nostartfiles '-Wl,-e,imu_driver_test' '-Wl,-Ttext=0x10000000' --specs=nosys.specs tests/imu_driver_test.c src/lsm6dsv.c -o build/imu-driver-test.elf -lm
+python tools/run_arm_test.py build/imu-driver-test.elf
+```
+
+Set `$toolchain` to your ARM compiler bin directory; the test runner needs
+Unicorn and pyelftools. Simulated tests do not establish physical accuracy.
+On each board, check `status`, approximately 1 g stationary magnitude, axis
+signs, Level, stationary/rotating Gyro, and each activity before classroom use.
+
+Verified October 20, 2026: firmware built and flash verification passed on the
+connected version 2 board (USB serial COM37). `status` identified LSM6DSV320X,
+ID `0x73`, with high-g disabled. Stationary raw XYZ was approximately
+`445, -810, 16134` at 16384 counts/g (magnitude about 0.986 g). The existing
+orientation mode delivered 183 quaternion/acceleration/gyro records in about
+three seconds, then stopped and restored normal +/-2 g live readings without
+reported FIFO overflow. Both-model simulated driver tests, beam ARM tests and
+viewer orientation/USB lifecycle tests passed. The viewer test was updated to
+recognize the existing 7200-sample beam file as well as 19200-sample drop files.
+Physical version 1 regression and on-device menu/activity checks remain to do.
+
+### Step 2: dual-stream recording (October 21, 2026)
+
+The normal on-device Record / Drop Test controls, stillness/freefall trigger,
+0.5-second pre-trigger window, and protected capture are unchanged. Both raw
+streams share ring indices, so trimming and wrap preserve their correspondence.
+Each raw buffer is 115,200 bytes; combined storage is 230,400 bytes (225 KiB).
+Low-g calibration is applied to trigger logic and display, while raw low/high
+counts are preserved. Calibration is frozen with the recording; later changes
+cannot reinterpret it. High-g does not inherit low-g calibration.
+
+The FIFO decoder accepts low-g tag `0x02` and high-g tag `0x1D`, matches their
+two-bit `TAG_CNT` time slots, and checks continuity modulo four. A partial first
+slot can be discarded during startup. After synchronization, a missing partner,
+duplicate, unexpected record, transfer failure, or FIFO overflow stops recording
+and marks it invalid. This follows ST's
+[AN6119, section 9.4](https://www.st.com/resource/en/application_note/DM01076787.pdf).
+Slots establish digital sampling correspondence; separate filter delays and
+high-g offsets still need characterization before automatic trace selection.
+
+Engineering commands (no existing protected capture may be overwritten):
+
+- `dualtest`: from HOME on v2, record 19,200 pairs without requiring a throw.
+- `dualtest ring`: roll for six nominal seconds, then exercise the normal
+  pre-trigger trim and post-trigger window. Calls the normal READY/EVENT display
+  updates when an OLED is detected; `status` reports OLED detection separately.
+- `status`: report consumed low/high records, completed pairs, startup discard,
+  integrity errors, peak FIFO occupancy, and host elapsed time. Consumed pairs
+  can exceed stored pairs because the driver reads batches and the ring rolls.
+- `download raw`: engineering-only EGD2 frame from a completed dual recording.
+  As of step 3, normal `download` emits EGG2 for paired captures and EGG1 for
+  single-sensor captures. Failed paired captures carry an explicit invalid flag.
+
+EGD2 is not a website `.egg` format. Its 32-byte little-endian header is:
+magic `EGD2`, u8 version (1), u8 flags (bit 0 overflow, bit 1 integrity failure),
+u16 header size (32), then u32 fields for nominal rate, pair count, low-g
+micro-g/count (488), high-g micro-g/count (10417), record stride (12), and payload
+CRC-32. Each record contains six signed int16 values: low XYZ followed by high
+XYZ, in chronological order. Rates and sensitivities are nominal datasheet
+values, not a precision clock or device calibration. No gyro data is recorded.
+
+After either test, save and verify both representations with:
+
+```powershell
+./tools/read_capture.ps1 -Port COM37 -OutputDirectory build -Prefix dual-bench
+python tools/check_dual_capture.py build/dual-bench.egd2 --legacy build/dual-bench.egg --report build/dual-bench-report.json
+```
+
+Bench verification on the connected v2 board passed five-second paired capture,
+FIFO tag continuity, and buffer wrap / pre-trigger retention. Both exports had
+valid CRCs and exactly 19,200 samples per stream; the rolling test's EGG1 trigger
+offset was 1920. No sequence errors, unexpected tags, transfer errors or FIFO
+overflow were reported. At rest the high-g channel has visibly greater noise
+and offset than low-g, reinforcing the need to keep low-g as the primary signal.
+The connected bench board reports `OLED: NOT FOUND`: READY/EVENT rendering was
+therefore skipped, and capture timing with an attached OLED is not yet verified.
+Real impact waveform accuracy, channel delay characterization, and physical
+version 1 regression remain unverified.
+
+### Step 3: dual-stream downloads and viewer (October 21, 2026)
+
+Normal v2 drop downloads are `.egg` files with an EGG2 header and both raw
+streams. The viewer starts with Low-g selected; choose High-g to inspect the
+other sensor. The selection preserves the time window and measurement cursors.
+Axis/magnitude views, zoom, event focus, and vertical scales up to +/-320 g work
+with either stream. Flight estimates always use low-g to avoid high-g noise.
+This does not combine the channels or automatically switch between them.
+
+Save .egg preserves the original binary file. Dual CSV exports include time,
+calibrated low-g XYZ/magnitude, factory-scaled high-g XYZ/magnitude, all six raw
+counts, per-sample clipping indicators, and a capture-valid indicator. EGG1 CSV
+columns remain unchanged. Header CRC protects ranges and calibration metadata;
+payload CRC protects raw samples. Data-loss flags and CRC failures are visibly
+reported and invalidate the CSV indicator. See [EGG_FORMAT.md](EGG_FORMAT.md).
+
+The included Version 2 stationary sample is an actual 19,200-pair bench capture,
+not an impact experiment. Its EGG2 payload was compared byte-for-byte with the
+engineering raw export. Tests cover C-to-JavaScript format compatibility,
+positive/negative calibration and clipping, metadata corruption, payload CRC,
+truncated/fragmented serial transfers, old EGG1 files, source switching and CSV.
+Run `tests/egg_format_test.c` under `tools/run_arm_test.py`, dumping symbol
+`egg2_test_frame` (128 bytes) to `build/egg2-format-fixture.egg`, then run:
+
+```text
+node tests/dual_viewer_test.cjs
+node tests/orientation_test.cjs
+```
+
 First firmware for the JLCPCB Instrumented Egg board. It tests the three LEDs,
 three pushbuttons, LSM6DSVQTR IMU, and the 128x64 I2C OLED while printing results
 over USB CDC.

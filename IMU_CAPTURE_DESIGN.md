@@ -1,5 +1,16 @@
 # IMU Capture and Impact-Analysis Design
 
+## Current implementation (October 21, 2026)
+
+The historical proposal below is superseded for current drop recording: five
+seconds at nominal 3840 Hz, +/-16 g low-g on both boards, plus +/-320 g high-g on
+version 2. Two raw XYZ int16 ring buffers total 230,400 bytes. FIFO time-slot
+tags pair the streams; integrity failures stop capture. EGG2 normal downloads
+preserve both raw streams and low-g calibration metadata. Single-stream EGG1
+recordings remain compatible. The viewer can show either sensor and export both
+to CSV. EGD2 remains an engineering export. See README's Step 2/3 sections and
+EGG_FORMAT.md for protocol and verification.
+
 ## Goal
 
 EggBert should capture short, high-resolution motion and impact events, normally

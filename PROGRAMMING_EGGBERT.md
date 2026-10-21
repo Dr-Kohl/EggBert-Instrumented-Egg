@@ -4,8 +4,12 @@ Use this procedure for every JLCPCB Instrumented Egg / EggBert board. It is inte
 
 ## Authoritative source and firmware
 
-- Work from this checkout: `C:\Users\Kohlc\OneDrive - Cedarville University\Documents\ChatGPT\EggBert Instrumented Egg`
-- Use the current local checkout after confirming `git log -1`. This checkout may be newer than the public remote.
+- Shared version 1/version 2 bring-up checkout (October 20, 2026): `C:\Users\Kohlc\Documents\Codex\ADLD\EggBert`.
+- This checkout started from public `master` commit `33171c2` and contains the
+  shared-IMU bring-up changes. Build and flash from this checkout for that work.
+- The earlier checkout at `C:\Users\Kohlc\OneDrive - Cedarville University\Documents\ChatGPT\EggBert Instrumented Egg`
+  has unfinished local changes; preserve them. Confirm the checkout and changes
+  with `git log -1` and `git status` before building or programming.
 - Build before programming:
 
   ```powershell
@@ -13,6 +17,11 @@ Use this procedure for every JLCPCB Instrumented Egg / EggBert board. It is inte
   ```
 
 - Program this artifact: `build\eggbert_bringup.elf`
+
+For the first configuration on this machine, use `cmake -S . -B build -G Ninja
+-DPICO_NO_PICOTOOL=1`. This uses the installed ARM compiler/Pico SDK and builds
+the ELF; upload with the installed Picotool below instead of building another
+copy of Picotool. Run the command on one line.
 
 Do **not** substitute an old Arduino template, generic Blink firmware, a `.uf2`, or an unrelated RP2040 robot project. Those may appear to flash successfully but will not run EggBert's OLED, IMU, buttons, capture menu, or serial protocol.
 
