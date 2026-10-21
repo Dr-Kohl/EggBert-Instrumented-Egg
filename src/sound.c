@@ -12,6 +12,8 @@ static const note_t cues[][6] = {
     [SOUND_READY]     = {{2400,45},{3000,65},{0,0}},
     [SOUND_RECORDING] = {{3600,25},{0,0}},
     [SOUND_COMPLETE]  = {{2400,55},{0,35},{3000,85},{0,0}},
+    // C7 E7 G7 E7 C8: a bright five-note arpeggio, 900 ms total.
+    [SOUND_STARTUP]   = {{2093,120},{2637,120},{3136,180},{2637,120},{4186,360},{0,0}},
     [SOUND_ERROR]     = {{1800,90},{0,60},{1800,90},{0,0}},
 };
 static alarm_id_t alarm;

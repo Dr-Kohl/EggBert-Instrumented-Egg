@@ -5,6 +5,7 @@ typedef enum {
     SOUND_READY,
     SOUND_RECORDING,
     SOUND_COMPLETE,
+    SOUND_STARTUP,
     SOUND_ERROR,
 } sound_cue_t;
 

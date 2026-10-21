@@ -2152,6 +2152,7 @@ int main(void) {
     sleep_ms(1500);
     printf("EggBert RP2354A bring-up starting\n");
 
+    sound_play(SOUND_STARTUP);
     for (unsigned i = 0; i < 3; ++i) { leds(1u << i); sleep_ms(300); }
     leds(0);
 
