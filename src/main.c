@@ -13,6 +13,7 @@
 #include "lsm6dsv.h"
 #include "egg_format.h"
 #include "accel_select.h"
+#include "sound.h"
 #include "gyro_session.h"
 #include "beam_trigger.h"
 #include "beam_frequency.h"
@@ -940,6 +941,7 @@ static void show_capture_wait_still(void) {
 }
 
 static void show_capture_armed(void) {
+    sound_play(SOUND_READY);
     if (!oled_ok) return;
     ui_begin("READY", "R");
     ssd1306_ui_text(18, 36, "WAIT", true);
@@ -948,6 +950,7 @@ static void show_capture_armed(void) {
 }
 
 static void show_capture_event(void) {
+    sound_play(SOUND_RECORDING);
     if (!oled_ok) return;
     ui_begin(trigger_was_freefall ? "FALL" : "IMPACT", "E");
     ssd1306_ui_text(18, 36, "EVENT", true);
@@ -1365,6 +1368,7 @@ static bool verify_capture_range(void) {
     uint8_t ctrl8 = lsm6dsv_read_ctrl8();
     if (ctrl8 != 0x03u) {
         lsm6dsv_fifo_stop();
+        sound_play(SOUND_ERROR);
         printf("ERROR: IMU CTRL8 readback is 0x%02X; expected 0x03 (+/-16 g).\n", ctrl8);
         return false;
     }
@@ -1404,6 +1408,7 @@ static void start_capture(void) {
     trigger_detected = false;
     trigger_was_freefall = false;
     if (!lsm6dsv_drop_fifo_start()) {
+        sound_play(SOUND_ERROR);
         printf("ERROR: could not start IMU FIFO\n");
         return;
     }
@@ -1451,6 +1456,7 @@ static void beam_arm(void) {
     beam_result_hz = 0;
     beam_trigger_reset(&beam_trigger);
     if (!lsm6dsv_beam_fifo_start()) {
+        sound_play(SOUND_ERROR);
         printf("ERROR: Beam FIFO configuration failed.\n");
         beam_state = BEAM_READY; return;
     }
@@ -1501,6 +1507,7 @@ static void finish_capture(const char *reason) {
     lsm6dsv_fifo_stop();
     capture_active = false;
     capture_complete = true;
+    sound_play(capture_fifo_overrun || capture_dual_failed ? SOUND_ERROR : SOUND_COMPLETE);
     capture_state = CAPTURE_COMPLETE;
     ui_state = UI_CAPTURE_COMPLETE;
     ui_selection = 0;
@@ -1542,6 +1549,7 @@ static void start_gentle_catch(void) {
     gentle_saturated = false;
     gentle_result_available = false;
     if (!lsm6dsv_drop_fifo_start()) {
+        sound_play(SOUND_ERROR);
         printf("ERROR: could not start IMU FIFO for Gentle Catch.\n");
         return;
     }
@@ -1554,6 +1562,7 @@ static void start_gentle_catch(void) {
     ui_state = UI_GENTLE_CATCH;
     ui_selection = 0;
     next_capture_poll = make_timeout_time_ms(5);
+    sound_play(SOUND_READY);
     show_gentle_ready();
     printf("Gentle Catch started: throw EggBert, then catch it gently.\n");
 }
@@ -1565,6 +1574,7 @@ static void finish_gentle_catch(void) {
     gentle_rearm_still_samples = 0;
     gentle_result_available = true;
     gentle_result_led_until = make_timeout_time_ms(GENTLE_RESULT_LED_MS);
+    sound_play(gentle_saturated ? SOUND_ERROR : SOUND_COMPLETE);
     show_gentle_result();
     if (gentle_saturated)
         printf("Gentle Catch result: sensor exceeded its %u g axis range.\n", gentle_has_highg ? 320u : 16u);
@@ -1673,6 +1683,7 @@ static void process_gentle_sample(const lsm6dsv_accel_sample_t *sample) {
             if (++gentle_freefall_samples >= GENTLE_FREEFALL_SAMPLES) {
                 capture_state = CAPTURE_GENTLE_WAIT_CATCH;
                 gentle_result_available = false;
+                sound_play(SOUND_RECORDING);
                 show_gentle_fall();
                 printf("Gentle Catch: 100 ms freefall confirmed; waiting for catch.\n");
             }
@@ -1687,6 +1698,7 @@ static void process_gentle_sample(const lsm6dsv_accel_sample_t *sample) {
                 gentle_freefall_samples = 0;
                 // Leave the previous score onscreen. Green now means it is
                 // armed for the next throw; a confirmed freefall clears it.
+                sound_play(SOUND_READY);
                 printf("Gentle Catch rearmed: held still for 0.5 seconds; green means ready to throw.\n");
             }
         } else gentle_rearm_still_samples = 0;
@@ -1800,6 +1812,7 @@ static void process_capture_sample(const lsm6dsv_accel_sample_t *sample) {
 }
 
 static void capture_sensor_failure(const char *reason, bool overrun) {
+    sound_play(SOUND_ERROR);
     if (ui_state == UI_GENTLE_CATCH) {
         exit_gentle_catch();
         printf("ERROR: Gentle Catch stopped: %s. No result is valid for this attempt.\n", reason);
@@ -1910,12 +1923,23 @@ static void handle_serial_command(void) {
         if (character == '\r' || character == '\n') {
             if (length == 0) continue;
             command[length] = '\0';
-            if (strcmp(command, "arm") == 0 || strcmp(command, "start") == 0) {
+            if (strcmp(command, "soundtest") == 0) {
+                if (capture_active || orientation_fused || ui_state != UI_HOME)
+                    printf("ERROR: return to idle HOME for soundtest.\n");
+                else {
+                    sound_play(SOUND_COMPLETE);
+                    printf("Sound test: GPIO22, 2400 Hz then 3000 Hz.\n");
+                }
+            } else if (strcmp(command, "soundoff") == 0) {
+                sound_stop();
+                printf("Sound off.\n");
+            } else if (strcmp(command, "arm") == 0 || strcmp(command, "start") == 0) {
                 printf("ERROR: arm EggBert using its on-device menu.\n");
             } else if (strcmp(command, "stop") == 0) {
                 printf("ERROR: capture control is on EggBert; serial stop is disabled.\n");
             } else if (strcmp(command, "status") == 0) {
                 print_capture_status();
+                printf("Sound: GPIO22 PWM, cue=%d (-1=silent).\n", sound_current_cue());
             } else if (strcmp(command, "dualtest") == 0) {
                 start_dual_test(false);
             } else if (strcmp(command, "dualtest ring") == 0) {
@@ -1943,7 +1967,7 @@ static void handle_serial_command(void) {
             } else if (strcmp(command, "clear") == 0) {
                 printf("ERROR: erase captures using the EggBert menu.\n");
             } else if (strcmp(command, "help") == 0) {
-                printf("Commands: status, download, orientation fused/on/off, dualtest [ring], download raw, help. Normal capture control uses the EggBert menu.\n");
+                printf("Commands: status, download, orientation fused/on/off, dualtest [ring], download raw, soundtest, soundoff, help. Normal capture control uses the EggBert menu.\n");
             } else {
                 printf("Unknown command: %s (type help)\n", command);
             }
@@ -1957,14 +1981,16 @@ static void handle_serial_command(void) {
 static void handle_button_press(unsigned button) {
     if (orientation_fused) { stop_orientation(); printf("ORIENTATION STOPPED: device menu\n"); }
     if (capture_active) {
-        if (ui_state == UI_GENTLE_CATCH && button == 1) exit_gentle_catch();
+        if (ui_state == UI_GENTLE_CATCH && button == 1) { sound_play(SOUND_BUTTON); exit_gentle_catch(); }
         else if (ui_state == UI_BEAM && button == 1 && beam_state != BEAM_RECORDING) {
+            sound_play(SOUND_BUTTON);
             lsm6dsv_fifo_stop(); capture_active=false; capture_state=CAPTURE_IDLE;
             capture_count=0; beam_state=BEAM_READY; show_beam();
         }
         return;
     }
 
+    sound_play(SOUND_BUTTON);
     if (ui_state == UI_GYRO) {
         if (button == 0) gyro_peak_view = !gyro_peak_view;
         else if (button == 1 && gyro_ok)
@@ -2122,6 +2148,7 @@ static void handle_button_press(unsigned button) {
 int main(void) {
     stdio_init_all();
     setup_gpio();
+    sound_init();
     sleep_ms(1500);
     printf("EggBert RP2354A bring-up starting\n");
 
@@ -2141,6 +2168,7 @@ int main(void) {
         ssd1306_show();
     }
 
+    if (!imu_ok) sound_play(SOUND_ERROR);
     if (imu_ok) {
         show_ui();
         printf("Capture bring-up ready. Use the EggBert menu to arm a drop test; type help for serial diagnostics.\n");

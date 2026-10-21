@@ -29,6 +29,7 @@ add_executable(eggbert_bringup
     src/main.c
     src/lsm6dsv.c
     src/ssd1306.c
+    src/sound.c
 )
 
 target_include_directories(eggbert_bringup PRIVATE include)
@@ -39,6 +40,8 @@ target_link_libraries(eggbert_bringup PRIVATE
     hardware_i2c
     hardware_spi
     hardware_flash
+    hardware_pwm
+    hardware_clocks
 )
 
 # Leave the final 8 KB outside the linkable image.  The firmware uses those

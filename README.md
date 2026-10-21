@@ -27,9 +27,9 @@ Version 2 also adds a 3000 Hz-labeled buzzer driven by GPIO22 through an AO3400A
 low-side MOSFET, with a 10 kOhm gate pulldown and SS14 flyback diode to Out+.
 The user confirmed GPIO22 is unused on version 1, so future button sounds may
 drive the same pin on both boards. Initialize it low/off and use nonblocking
-sound timing. Confirm whether the buzzer is active or passive before selecting
-the waveform. See the supplied [speaker schematic](docs/hardware/speaker-gpio22-schematic.png).
-Button sounds are not implemented in this milestone.
+sound timing. The user confirmed it is a passive piezo speaker requiring
+a waveform. See the supplied [speaker schematic](docs/hardware/speaker-gpio22-schematic.png).
+Button and status sounds are implemented with hardware PWM and timer alarms.
 
 ### Version 2 verification
 
@@ -372,3 +372,37 @@ LSM6DSV320X 0x73 and OLED OK. A new 19,200-pair capture completed with no FIFO
 overrun, sequence/tag/I/O errors; EGG2 header/data CRCs and raw-stream identity
 passed. Peak switching is tested synthetically; this stationary bench recording
 does not validate real high-g impacts or Gentle Catch scoring on the device.
+
+### Step 5: passive piezo sounds (GPIO22)
+
+The same firmware drives GPIO22 on both boards; version 1 has no fitted speaker.
+The GPIO starts low and returns to SIO output low after each cue. PWM runs at
+approximately 50% duty using a 1 MHz counter derived from the actual system
+clock. No sample buffer, blocking sleep or per-waveform interrupt is used.
+Alarm callbacks advance notes and stop the output even during display/USB work.
+Status cues preempt button clicks; a failed alarm allocation immediately silences
+the pin. All sound control calls are on core 0.
+
+Cues: button 3000 Hz / 12 ms; ready 2400 then 3000 Hz; recording event 3600 Hz /
+25 ms; complete 2400 then 3000 Hz with a gap; error two 1800 Hz notes. Record
+and Gentle Catch get ready/event/result feedback. Ignored buttons during a
+recording stay silent. Beam has no ready/event tones during acquisition, to
+avoid exciting the beam mechanically; completion sounds after sampling stops.
+
+At idle HOME, serial `soundtest` plays the completion cue; `soundoff` stops sound.
+`status` reports the active cue (-1 means silent). Soundtest is refused during
+capture or fused orientation and outside HOME. It does not change saved data.
+
+ARM tests compile the actual sound module against PWM/timer stubs and exercise
+all sequences, frequency/divider/duty, priority/preemption, stale callbacks,
+cancellation, pin-low termination and alarm allocation failure. Build with the
+same toolchain as the IMU tests, using `-Itests/sound_stubs -Itests/imu_stubs
+-Iinclude`, entry `sound_test`, and sources `tests/sound_test.c src/sound.c`.
+
+Verified on COM38: flash verified; IMU and OLED OK; user confirmed the test was
+audible; status changed from cue 3 to silent automatically. Rolling dual capture
+with ready/event/completion cues retained 19,200 pairs, trigger offset 1920,
+no FIFO overrun/sequence/tag/I/O errors, and matching EGD2/EGG2 payload CRC
+3c2b0ea0. Audible preferences and physical button/menu trials remain user checks.
+A piezo can introduce mechanical vibration into acceleration readings; this
+checks acquisition integrity, not absence of acoustic/mechanical artifacts.

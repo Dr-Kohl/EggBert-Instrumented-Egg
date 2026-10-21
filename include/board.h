@@ -7,6 +7,9 @@
 #define LED_YELLOW_PIN      2u
 #define LED_RED_PIN         12u
 
+// v2 passive piezo through an AO3400A low-side switch. Unused on v1.
+#define BUZZER_PIN          22u
+
 #define BUTTON_1_PIN        0u   // SW5, pressed = GND
 #define BUTTON_2_PIN        3u   // SW2, pressed = GND
 #define BUTTON_3_PIN        13u  // SW3, pressed = GND
