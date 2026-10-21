@@ -1,5 +1,13 @@
 # EggBert RP2354A board bring-up
 
+HOME 2 is ordered BEAM, CALIBRATE, RAW XYZ. In calibration, the top button
+(UP EXIT) cancels at any stage before saving and keeps the previous calibration.
+After six faces the candidate stays in RAM; press MID SAVE to deliberately
+install it. Exiting earlier discards partial or completed unsaved readings.
+The cancel/explicit-save ARM harness is generated from the actual wizard
+functions by `tools/make_calibration_cancel_test.py`; compile its output with
+entry `calibration_cancel_test`, then use `tools/run_arm_test.py`.
+
 ## Shared firmware: version 1 and version 2 bring-up
 
 The same firmware now detects LSM6DSV (`WHO_AM_I=0x70`) or LSM6DSV320XTR

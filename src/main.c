@@ -206,6 +206,8 @@ static bool calibration_collecting;
 static bool calibration_armed;
 static absolute_time_t calibration_capture_at;
 static bool calibration_complete;
+static bool calibration_ready_to_save;
+static calibration_record_t calibration_pending;
 static char calibration_feedback[12];
 
 typedef enum {
@@ -229,7 +231,7 @@ typedef enum {
 
 static ui_state_t ui_state = UI_HOME;
 static unsigned ui_selection;
-static const unsigned home_menu_order[] = {0, 1, 2, 3, 9, 4, 5, 6, 7, 8};
+static const unsigned home_menu_order[] = {0, 1, 2, 3, 9, 4, 5, 6, 8, 7};
 static gyro_session_t gyro_session;
 static bool gyro_peak_view = true;
 static bool gyro_ok;
@@ -306,8 +308,8 @@ static void calibration_apply_capture_sample(lsm6dsv_accel_sample_t *sample) {
     sample->z = calibration_correct_axis(sample->z, 2u, capture_scale);
 }
 
-static bool calibration_save(void) {
-    calibration_record_t record = calibration;
+static bool calibration_save(const calibration_record_t *candidate) {
+    calibration_record_t record = *candidate;
     record.magic = CALIBRATION_MAGIC;
     record.version = CALIBRATION_VERSION;
     record.generation = calibration_valid ? calibration.generation + 1u : 1u;
@@ -417,8 +419,8 @@ static void show_home(void) {
     ssd1306_ui_text(2, 16, second_page ? "HOME 2" : "HOME 1", true);
     if (second_page) {
         home_menu_item(30, "BEAM", ui_selection == 6);
-        home_menu_item(43, "RAW XYZ", ui_selection == 7);
-        home_menu_item(56, "CALIBRATE", ui_selection == 8);
+        home_menu_item(43, "CALIBRATE", ui_selection == 8);
+        home_menu_item(56, "RAW XYZ", ui_selection == 7);
     } else {
         home_menu_item(30, "RECORD", ui_selection == 0);
         home_menu_item(43, "CATCH", ui_selection == 1);
@@ -1026,6 +1028,8 @@ static void calibration_reset_wizard(void) {
     calibration_collecting = false;
     calibration_armed = false;
     calibration_complete = false;
+    calibration_ready_to_save = false;
+    memset(&calibration_pending, 0, sizeof calibration_pending);
     calibration_feedback[0] = '\0';
 }
 
@@ -1050,12 +1054,15 @@ static void show_calibration(void) {
     if (!oled_ok) return;
     ui_begin("CAL", "I");
     char progress[10];
-    snprintf(progress, sizeof progress, "FACES %u/6",
+    snprintf(progress, sizeof progress, "%u OF 6",
              (unsigned)__builtin_popcount(calibration_faces_seen));
     ssd1306_ui_text(18, 25, progress, true);
     if (calibration_complete) {
         ssd1306_ui_text(18, 38, "SAVED", true);
-        ssd1306_ui_text(18, 112, "MID EXIT", true);
+        ssd1306_ui_text(16, 112, "MID EXIT", true);
+    } else if (calibration_ready_to_save) {
+        ssd1306_ui_text(18, 45, calibration_feedback[0] ? "SAVE ERR" : "READY", true);
+        ssd1306_ui_text(16, 112, "MID SAVE", true);
     } else if (calibration_armed) {
         ssd1306_ui_text(18, 45, "SET DOWN", true);
         ssd1306_ui_text(18, 59, "AUTO CAP", true);
@@ -1071,6 +1078,7 @@ static void show_calibration(void) {
         ssd1306_ui_text(18, 59, "ANY FACE", true);
         ssd1306_ui_text(18, 112, "MID CAP", true);
     }
+    ssd1306_ui_text(16, 99, "UP EXIT", true);
     ssd1306_show();
 }
 
@@ -1093,7 +1101,7 @@ static void calibration_finish_face(void) {
     for (unsigned i = 0; i < 3u; ++i) {
         absolute[i] = (uint32_t)(average[i] < 0 ? -average[i] : average[i]);
         if (absolute[i] > absolute[axis]) axis = i;
-        if ((int32_t)calibration_maximum[i] - calibration_minimum[i] > CALIBRATION_STILL_RANGE) {
+        if ((int32_t)calibration_maximum[i] - calibration_minimum[i] > (int32_t)CALIBRATION_STILL_RANGE) {
             strcpy(calibration_feedback, "TOO MOVED");
             return;
         }
@@ -1116,6 +1124,7 @@ static void calibration_finish_face(void) {
              (char)('X' + axis), average[axis] < 0 ? '-' : '+');
 
     if (calibration_faces_seen != 0x3fu) return;
+    calibration_record_t candidate = calibration;
     for (unsigned i = 0; i < 3u; ++i) {
         int32_t span = (int32_t)calibration_positive[i] - calibration_negative[i];
         if (span < (int32_t)(LIVE_ACCEL_COUNTS_PER_G * 16u / 10u)) {
@@ -1123,14 +1132,32 @@ static void calibration_finish_face(void) {
             calibration_faces_seen = 0;
             return;
         }
-        calibration.offset_live_counts[i] = ((int32_t)calibration_positive[i] + calibration_negative[i]) / 2;
-        calibration.scale_q16[i] = (uint32_t)(((uint64_t)2u * LIVE_ACCEL_COUNTS_PER_G << 16) / span);
+        candidate.offset_live_counts[i] = ((int32_t)calibration_positive[i] + calibration_negative[i]) / 2;
+        candidate.scale_q16[i] = (uint32_t)(((uint64_t)2u * LIVE_ACCEL_COUNTS_PER_G << 16) / span);
     }
-    if (calibration_save()) calibration_complete = true;
-    else strcpy(calibration_feedback, "SAVE FAIL");
+    calibration_pending = candidate;
+    calibration_ready_to_save = true;
+    calibration_feedback[0] = '\0';
+}
+
+static void calibration_commit_pending(void) {
+    if (!calibration_ready_to_save || calibration_complete) return;
+    if (calibration_save(&calibration_pending)) {
+        calibration_complete = true;
+        calibration_ready_to_save = false;
+    } else strcpy(calibration_feedback, "SAVE FAIL");
+}
+
+static void calibration_exit(void) {
+    bool saved = calibration_complete;
+    calibration_reset_wizard();
+    ui_state = UI_HOME;
+    ui_selection = 8;
+    printf(saved ? "Calibration closed.\n" : "Calibration cancelled; previous calibration retained.\n");
 }
 
 static void calibration_process_raw(int16_t x, int16_t y, int16_t z) {
+    if (ui_state != UI_CALIBRATION || calibration_ready_to_save || calibration_complete) return;
     if (calibration_armed) {
         if (!time_reached(calibration_capture_at)) return;
         calibration_armed = false;
@@ -2105,6 +2132,16 @@ static void handle_button_press(unsigned button) {
         show_ui(); return;
     }
 
+    if (ui_state == UI_CALIBRATION) {
+        if (button == 0 || (button == 1 && calibration_complete)) calibration_exit();
+        else if (button == 1) {
+            if (calibration_ready_to_save) calibration_commit_pending();
+            else calibration_begin_face();
+        }
+        show_ui();
+        return;
+    }
+
     if (button == 0) {
         if (ui_state == UI_HOME) { ui_selection = home_step(false); show_ui(); return; }
         unsigned count =
@@ -2163,9 +2200,7 @@ static void handle_button_press(unsigned button) {
         ui_selection = 7;
         break;
     case UI_CALIBRATION:
-        if (calibration_complete) { ui_state = UI_HOME; ui_selection = 8; }
-        else calibration_begin_face();
-        break;
+        break; // handled above, including cancellation during capture
     case UI_CAPTURE_COMPLETE:
         ui_state = UI_CAPTURE_OPTIONS;
         ui_selection = 0;

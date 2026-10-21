@@ -14,6 +14,15 @@ A separator at y=11 precedes the page title and full-width menu rows. The
 existing item order, page switching and button actions are preserved.
 Battery voltage refreshes on HOME when its displayed tenth changes.
 
+Follow-up: HOME 2 now orders BEAM, CALIBRATE, RAW XYZ, in both drawing and
+navigation. Calibration shows UP EXIT at every stage. The top button cancels
+the wizard, discards partial/staged readings, and returns to the selected
+CALIBRATE item without replacing the active calibration. Completing six faces
+now stages a candidate and displays MID SAVE; only that explicit middle-button
+press writes it. A failed save leaves the previous active calibration intact
+and permits retry or cancellation. After successful save, UP EXIT or MID EXIT
+returns home while retaining the intentionally saved calibration.
+
 This is phase one only. Activity screens and submenus retain the earlier
 yellow-rail geometry described below until they are individually reviewed.
 The display driver, rotation, sensor sampling and recording buffers are unchanged.
