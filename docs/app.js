@@ -37,6 +37,22 @@ function correctLowCount(raw, offsetLive, scaleQ16, countsPerG, liveCountsPerG) 
   const offset = Math.trunc(offsetLive*countsPerG/liveCountsPerG);
   return clamp(Math.floor(((raw-offset)*scaleQ16+32768)/65536),-32768,32767);
 }
+// Hysteresis uses per-axis limits, not vector magnitude. All axes share a source.
+function automaticStream(low, high, rawLow, count) {
+  const stream={x:new Float32Array(count),y:new Float32Array(count),z:new Float32Array(count),magnitude:new Float32Array(count),fullScaleG:320,clipped:new Uint8Array(count),source:new Uint8Array(count)};
+  let useHigh=false;
+  for (let i=0;i<count;i++) {
+    const lowPeak=Math.max(Math.abs(low.x[i]),Math.abs(low.y[i]),Math.abs(low.z[i]));
+    const rawPeak=Math.max(Math.abs(rawLow[3*i]),Math.abs(rawLow[3*i+1]),Math.abs(rawLow[3*i+2]))/2048;
+    const highPeak=Math.max(Math.abs(high.x[i]),Math.abs(high.y[i]),Math.abs(high.z[i]));
+    if (!useHigh && (lowPeak>=12 || rawPeak>=12)) useHigh=true;
+    else if (useHigh && highPeak<8 && lowPeak<8 && rawPeak<8) useHigh=false;
+    const selected=useHigh ? high : low;
+    for (const key of ["x","y","z","magnitude","clipped"]) stream[key][i]=selected[key][i];
+    stream.source[i]=Number(useHigh);
+  }
+  return stream;
+}
 function parseEgg(bytes) {
   const {view,version,flags,headerBytes,sampleRate,sampleCount,triggerOffset,postSamples,countsPerG,sampleBytes,expectedCrc,dual}=captureLayout(bytes);
   const totalBytes = headerBytes + sampleCount * sampleBytes;
@@ -69,8 +85,9 @@ function parseEgg(bytes) {
     low.magnitude[i]=Math.hypot(low.x[i],low.y[i],low.z[i]);
     if (dual) high.magnitude[i]=Math.hypot(high.x[i],high.y[i],high.z[i]);
   }
-  return {version,flags,sampleRate,sampleCount,triggerOffset,postSamples,countsPerG,dual,low,high,rawLow,rawHigh,calibration,
-          fullScaleG:low.fullScaleG,x:low.x,y:low.y,z:low.z,magnitude:low.magnitude,validCrc:crc32(bytes.subarray(headerBytes))===expectedCrc};
+  const auto=dual ? automaticStream(low,high,rawLow,sampleCount) : low;
+  return {version,flags,sampleRate,sampleCount,triggerOffset,postSamples,countsPerG,dual,low,high,auto,rawLow,rawHigh,calibration,
+          fullScaleG:auto.fullScaleG,x:auto.x,y:auto.y,z:auto.z,magnitude:auto.magnitude,validCrc:crc32(bytes.subarray(headerBytes))===expectedCrc};
 }
 
 function detectFlight() {
@@ -93,10 +110,10 @@ function detectFlight() {
 
 function displayCapture(bytes) {
   capture = parseEgg(bytes); captureBytes = bytes;
-  sensorSource="low"; $("#sensorSource").value="low";
+  sensorSource=capture.dual ? "auto" : "low"; $("#sensorSource").value=sensorSource;
   $("#sensorControls").hidden=!capture.dual;
   $("#sensorSource").disabled=!capture.dual;
-  $("#sensorNote").textContent=capture.dual ? "Low-g shows small motions; high-g records stronger impacts. High-g uses factory scaling; low-g user calibration does not apply to it." : "";
+  $("#sensorNote").textContent=capture.dual ? "Automatic uses low-g below 12 g per axis, switches to high-g at 12 g, and returns below 8 g on both sensors. Both raw streams are preserved. High-g uses factory scaling; offsets or small steps can appear at transitions." : "";
   chartMode = "axes";
   verticalScale = "auto"; fittedDomains = undefined;
   fullDomains = { axes: domainFor([capture.x, capture.y, capture.z], 0, capture.sampleCount - 1, true), magnitude: domainFor([capture.magnitude], 0, capture.sampleCount - 1, false) };
@@ -127,7 +144,7 @@ function displayCapture(bytes) {
 }
 
 function selectSensor(source) {
-  if (!capture || !["low","high"].includes(source) || (source==="high" && !capture.high)) return;
+  if (!capture || !["auto","low","high"].includes(source) || (source==="high" && !capture.high)) return;
   sensorSource=source;
   $("#sensorSource").value=source;
   const stream=capture[source];
@@ -203,7 +220,7 @@ function drawAll() {
   $("#scaleReadout").textContent = `${domain[0]} to ${domain[1]} g`;
   for (const option of $("#verticalScale").options) if (Number(option.value)>0) option.textContent = chartMode === "axes" ? `±${option.value} g` : `0–${option.value} g`;
   const axes = chartMode === "axes";
-  $("#chartTitle").textContent = (capture.dual ? (sensorSource==="high" ? "High-g · " : "Low-g · ") : "") + (axes ? "Acceleration" : "Acceleration magnitude");
+  $("#chartTitle").textContent = (capture.dual ? (sensorSource==="auto" ? "Automatic - " : sensorSource==="high" ? "High-g · " : "Low-g · ") : "") + (axes ? "Acceleration" : "Acceleration magnitude");
   $("#chartLegend").hidden = !axes;
   $("#captureChart").setAttribute("aria-label", `${axes ? "Acceleration X, Y, and Z" : "Acceleration magnitude"} in g over time. Scroll to zoom. ${measuring ? "Click to place and drag measurement cursors." : "Drag to pan."}`);
   drawPlot($("#captureChart"), axes ? [capture.x, capture.y, capture.z] : [capture.magnitude], domain, axes ? ["#c33", "#17834d", "#2463c5"] : ["#6240a0"], "g", events);
@@ -557,13 +574,15 @@ async function saveCaptureFile(blob, extension, description, mimeType) {
 
 function captureCsvText() {
   if (!capture) return "";
-  const rows = [capture.dual ? "Time (s),Low X (g),Low Y (g),Low Z (g),Low magnitude (g),High X (g),High Y (g),High Z (g),High magnitude (g),Low raw X (counts),Low raw Y (counts),Low raw Z (counts),High raw X (counts),High raw Y (counts),High raw Z (counts),Low clipped,High clipped,Capture valid" : "Time (s),X (g),Y (g),Z (g),Magnitude (g)"];
+  const rows = [capture.dual ? "Time (s),Low X (g),Low Y (g),Low Z (g),Low magnitude (g),High X (g),High Y (g),High Z (g),High magnitude (g),Low raw X (counts),Low raw Y (counts),Low raw Z (counts),High raw X (counts),High raw Y (counts),High raw Z (counts),Low clipped,High clipped,Capture valid,Auto X (g),Auto Y (g),Auto Z (g),Auto magnitude (g),Auto source,Auto clipped" : "Time (s),X (g),Y (g),Z (g),Magnitude (g)"];
   for (let index = 0; index < capture.sampleCount; index += 1) {
     if (capture.dual) {
       const values=[(index/capture.sampleRate).toFixed(6)];
       for (const stream of [capture.low,capture.high]) for (const key of ["x","y","z","magnitude"]) values.push(stream[key][index].toFixed(6));
       for (const raw of [capture.rawLow,capture.rawHigh]) values.push(...raw.subarray(3*index,3*index+3));
       values.push(capture.low.clipped[index],capture.high.clipped[index],Number(capture.validCrc && !(capture.flags & (FLAG_INVALID|FLAG_FIFO_OVERRUN))));
+      for (const key of ["x","y","z","magnitude"]) values.push(capture.auto[key][index].toFixed(6));
+      values.push(capture.auto.source[index] ? "high" : "low",capture.auto.clipped[index]);
       rows.push(values.join(",")); continue;
     }
     rows.push([

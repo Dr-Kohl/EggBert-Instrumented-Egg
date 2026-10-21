@@ -12,6 +12,7 @@
 #include "hardware/sync.h"
 #include "lsm6dsv.h"
 #include "egg_format.h"
+#include "accel_select.h"
 #include "gyro_session.h"
 #include "beam_trigger.h"
 #include "beam_frequency.h"
@@ -251,6 +252,9 @@ static uint32_t gentle_peak_axis_counts;
 static uint32_t gentle_rearm_still_samples;
 static uint32_t gentle_freefall_samples;
 static bool gentle_saturated;
+static bool gentle_has_highg, gentle_use_high;
+static uint32_t gentle_current_peak;
+static bool gentle_current_clipped;
 static bool gentle_result_available;
 static absolute_time_t gentle_result_led_until;
 
@@ -908,10 +912,12 @@ static void show_gentle_result(void) {
              score == GENTLE_SCORE_FIRM ? "FIRM" : "HARD", "G");
     if (gentle_saturated) {
         ssd1306_ui_text(18, 36, "PEAK", true);
-        ssd1306_ui_text_scaled(24, 48, "16", true, 2);
+        ssd1306_ui_text_scaled(gentle_has_highg ? 17 : 24, 48, gentle_has_highg ? "320" : "16", true, 2);
         ssd1306_ui_text_scaled(20, 70, "G+", true, 2);
     } else {
-        snprintf(peak, sizeof peak, "%lu.%lu",
+        if (gentle_peak_axis_counts >= 100u*ACCEL_COUNTS_PER_G)
+            snprintf(peak, sizeof peak, "%lu", (unsigned long)(gentle_peak_axis_counts / ACCEL_COUNTS_PER_G));
+        else snprintf(peak, sizeof peak, "%lu.%lu",
                  (unsigned long)(gentle_peak_axis_counts / ACCEL_COUNTS_PER_G),
                  (unsigned long)((gentle_peak_axis_counts % ACCEL_COUNTS_PER_G) * 10u / ACCEL_COUNTS_PER_G));
         ssd1306_ui_text(18, 36, "PEAK", true);
@@ -1535,11 +1541,14 @@ static void start_gentle_catch(void) {
     gentle_freefall_samples = 0;
     gentle_saturated = false;
     gentle_result_available = false;
-    if (!lsm6dsv_fifo_start()) {
+    if (!lsm6dsv_drop_fifo_start()) {
         printf("ERROR: could not start IMU FIFO for Gentle Catch.\n");
         return;
     }
     if (!verify_capture_range()) return;
+    gentle_has_highg = lsm6dsv_dual_fifo_active();
+    gentle_use_high = false;
+    capture_last_sample_ms = to_ms_since_boot(get_absolute_time());
     capture_active = true;
     capture_state = CAPTURE_GENTLE_WAIT_FALL;
     ui_state = UI_GENTLE_CATCH;
@@ -1558,7 +1567,7 @@ static void finish_gentle_catch(void) {
     gentle_result_led_until = make_timeout_time_ms(GENTLE_RESULT_LED_MS);
     show_gentle_result();
     if (gentle_saturated)
-        printf("Gentle Catch result: sensor exceeded its 16 g axis range.\n");
+        printf("Gentle Catch result: sensor exceeded its %u g axis range.\n", gentle_has_highg ? 320u : 16u);
     else
         printf("Gentle Catch result: peak axis %lu.%lu g.\n",
                (unsigned long)(gentle_peak_axis_counts / ACCEL_COUNTS_PER_G),
@@ -1657,7 +1666,7 @@ static uint32_t sample_peak_axis(const lsm6dsv_accel_sample_t *sample) {
 
 static void process_gentle_sample(const lsm6dsv_accel_sample_t *sample) {
     uint64_t magnitude = magnitude_squared(sample);
-    uint32_t peak_axis = sample_peak_axis(sample);
+    uint32_t peak_axis = gentle_current_peak;
 
     if (capture_state == CAPTURE_GENTLE_WAIT_FALL) {
         if (magnitude < (uint64_t)FREEFALL_MAX_COUNTS * FREEFALL_MAX_COUNTS) {
@@ -1689,7 +1698,7 @@ static void process_gentle_sample(const lsm6dsv_accel_sample_t *sample) {
             capture_state = CAPTURE_GENTLE_MEASURE;
             gentle_measure_samples = 1;
             gentle_peak_axis_counts = peak_axis;
-            gentle_saturated = peak_axis >= SATURATION_NEAR_COUNTS;
+            gentle_saturated = gentle_current_clipped;
             show_gentle_measure();
         }
         return;
@@ -1697,7 +1706,7 @@ static void process_gentle_sample(const lsm6dsv_accel_sample_t *sample) {
 
     if (capture_state == CAPTURE_GENTLE_MEASURE) {
         if (peak_axis > gentle_peak_axis_counts) gentle_peak_axis_counts = peak_axis;
-        if (peak_axis >= SATURATION_NEAR_COUNTS) gentle_saturated = true;
+        if (gentle_current_clipped) gentle_saturated = true;
         if (++gentle_measure_samples >= GENTLE_CATCH_SAMPLES) finish_gentle_catch();
     }
 }
@@ -1790,12 +1799,22 @@ static void process_capture_sample(const lsm6dsv_accel_sample_t *sample) {
         finish_capture("post-event window complete");
 }
 
+static void capture_sensor_failure(const char *reason, bool overrun) {
+    if (ui_state == UI_GENTLE_CATCH) {
+        exit_gentle_catch();
+        printf("ERROR: Gentle Catch stopped: %s. No result is valid for this attempt.\n", reason);
+    } else {
+        capture_fifo_overrun = overrun;
+        capture_dual_failed = true;
+        finish_capture(reason);
+    }
+}
+
 static void service_capture(void) {
     if (!capture_active) return;
     if (lsm6dsv_dual_fifo_active() &&
         to_ms_since_boot(get_absolute_time()) - capture_last_sample_ms > 1500u) {
-        capture_dual_failed = true;
-        finish_capture("ERROR dual sensor timeout"); return;
+        capture_sensor_failure("dual sensor timeout", false); return;
     }
     if (capture_is_beam && ui_state == UI_BEAM &&
         to_ms_since_boot(get_absolute_time())-capture_last_sample_ms>1500u) {
@@ -1816,29 +1835,41 @@ static void service_capture(void) {
             size_t count = lsm6dsv_dual_fifo_read(fifo_pairs, 32u);
             lsm6dsv_dual_stats_t s = lsm6dsv_dual_fifo_stats();
             if (s.overrun || s.sequence_errors || s.unexpected_tags || s.io_errors) {
-                capture_fifo_overrun = s.overrun;
-                capture_dual_failed = true;
-                finish_capture("ERROR dual FIFO integrity"); break;
+                capture_sensor_failure("dual FIFO integrity", s.overrun); break;
             }
             if (!count) break;
             capture_last_sample_ms = to_ms_since_boot(get_absolute_time());
             for (size_t i = 0; i < count && capture_active; ++i) {
                 capture_raw_pair = fifo_pairs[i];
                 lsm6dsv_accel_sample_t corrected = fifo_pairs[i].low;
-                calibration_apply_capture_sample(&corrected);
+                if (ui_state == UI_GENTLE_CATCH) {
+                    corrected.x=calibration_correct_axis(corrected.x,0u,ACCEL_COUNTS_PER_G);
+                    corrected.y=calibration_correct_axis(corrected.y,1u,ACCEL_COUNTS_PER_G);
+                    corrected.z=calibration_correct_axis(corrected.z,2u,ACCEL_COUNTS_PER_G);
+                    uint32_t high_peak=sample_peak_axis(&fifo_pairs[i].high);
+                    gentle_use_high=accel_select_high(gentle_use_high,sample_peak_axis(&corrected),
+                                                     sample_peak_axis(&fifo_pairs[i].low),high_peak);
+                    gentle_current_peak=gentle_use_high ? accel_high_peak_low_counts(high_peak) : sample_peak_axis(&corrected);
+                    gentle_current_clipped=gentle_use_high ? high_peak>=30413u : sample_peak_axis(&fifo_pairs[i].low)>=32563u;
+                } else calibration_apply_capture_sample(&corrected);
                 process_capture_sample(&corrected);
             }
             continue;
         }
         bool overrun = false;
         size_t read = lsm6dsv_fifo_read(fifo_samples, 64u, &overrun);
-        if (overrun) capture_fifo_overrun = true;
+        if (overrun) {
+            if (ui_state == UI_GENTLE_CATCH) { capture_sensor_failure("FIFO overflow", true); break; }
+            capture_fifo_overrun = true;
+        }
         if (read == 0) break;
         for (size_t i = 0; i < read && capture_active; ++i) {
             if (ui_state == UI_GENTLE_CATCH) {
+                gentle_current_clipped=sample_peak_axis(&fifo_samples[i])>=SATURATION_NEAR_COUNTS;
                 fifo_samples[i].x=calibration_correct_axis(fifo_samples[i].x,0u,ACCEL_COUNTS_PER_G);
                 fifo_samples[i].y=calibration_correct_axis(fifo_samples[i].y,1u,ACCEL_COUNTS_PER_G);
                 fifo_samples[i].z=calibration_correct_axis(fifo_samples[i].z,2u,ACCEL_COUNTS_PER_G);
+                gentle_current_peak=sample_peak_axis(&fifo_samples[i]);
             } else calibration_apply_capture_sample(&fifo_samples[i]);
             process_capture_sample(&fifo_samples[i]);
         }

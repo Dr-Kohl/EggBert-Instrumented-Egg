@@ -37,11 +37,29 @@ near(v.run('viewStart'),0.0001); near(v.run('viewSeconds'),0.0005);
 assert.deepEqual(Array.from(v.run('cursors')),[0,2]);
 near(v.run('capture.x[0]'),1.000032);
 const csv=v.run('captureCsvText()').trim().split(/\r?\n/).map(line=>line.split(','));
-assert.equal(csv.length,5); assert.equal(csv[0].length,18);
+assert.equal(csv.length,5); assert.equal(csv[0].length,24);
 assert.equal(csv[1][1],'1.488281'); assert.equal(csv[1][5],'1.000032');
 assert.equal(csv[1][9],'2048'); assert.equal(csv[1][12],'96'); assert.equal(csv[1][17],'1');
 assert.equal(Buffer.compare(Buffer.from(v.run('captureBytes')),Buffer.from(fixture)),0);
 v.run('selectSensor("low")'); near(v.run('capture.x[0]'),3048/2048);
+
+// Sharp impact, hysteresis, all-axis switching, and return after low clipping.
+const lowPeaks=[1,11,12,16,10,7,7,12,7];
+const highPeaks=[1,11,13,100,9,8.1,7,40,6];
+v.context.lowPeaks=lowPeaks; v.context.highPeaks=highPeaks;
+const selected=v.run(`(()=>{
+  const make=values=>({x:Float32Array.from(values),y:Float32Array.from(values.map(()=>2)),z:new Float32Array(values.length),magnitude:Float32Array.from(values.map(x=>Math.hypot(x,2))),clipped:new Uint8Array(values.length)});
+  const low=make(lowPeaks), high=make(highPeaks), raw=new Int16Array(lowPeaks.length*3);
+  lowPeaks.forEach((x,i)=>raw[3*i]=Math.min(32767,x*2048));
+  low.clipped[3]=1; high.clipped[7]=1;
+  return automaticStream(low,high,raw,lowPeaks.length);
+})()`);
+assert.deepEqual(Array.from(selected.source),[0,0,1,1,1,1,0,1,0]);
+near(selected.x[3],100); assert.equal(selected.clipped[3],0); assert.equal(selected.clipped[7],1);
+v.run('displayCapture(bytes)'); assert.equal(v.run('sensorSource'),'auto');
+assert.match(v.elements.get('#chartTitle').textContent,/Automatic/);
+v.run('selectSensor("low"); selectSensor("auto")');
+assert.equal(v.run('capture.x===capture.auto.x'),true);
 
 for (const name of fs.readdirSync(path.join(__dirname,'../docs/sample-data')).filter(n=>n.endsWith('.egg'))) {
   v.context.bytes=new Uint8Array(fs.readFileSync(path.join(__dirname,'../docs/sample-data',name)));
@@ -50,7 +68,7 @@ for (const name of fs.readdirSync(path.join(__dirname,'../docs/sample-data')).fi
   assert.equal(v.elements.get('#sensorControls').hidden,!dual);
   if (dual) {
     assert.equal(v.run('capture.sampleCount'),19200);
-    assert.equal(v.run('captureCsvText().split("\\r\\n")[0].split(",").length'),18);
+    assert.equal(v.run('captureCsvText().split("\\r\\n")[0].split(",").length'),24);
   } else assert.equal(v.run('captureCsvText().split("\\r\\n")[0]'),'Time (s),X (g),Y (g),Z (g),Magnitude (g)');
 }
 const corrupt=fixture.slice(); corrupt[corrupt.length-1]^=1; v.context.bytes=corrupt;
@@ -61,7 +79,7 @@ const loss=fixture.slice(); loss[5]|=0x20; headerCrc(v,loss); v.context.bytes=lo
 v.run('displayCapture(bytes)'); assert.equal(v.elements.get('#captureWarning').hidden,false);
 assert.match(v.elements.get('#integrity').textContent,/Data loss/);
 assert.equal(v.run('detectFlight()'),undefined);
-assert.equal(v.run('captureCsvText().trim().split("\\r\\n")[1].split(",").at(-1)'),'0');
+assert.equal(v.run('captureCsvText().trim().split("\\r\\n")[1].split(",")[17]'),'0');
 for (const offset of [32,40,52,64,68,76]) {
   const bad=fixture.slice(); bad[offset]^=1; v.context.bytes=bad;
   assert.throws(()=>v.run('parseEgg(bytes)'),/header CRC/);

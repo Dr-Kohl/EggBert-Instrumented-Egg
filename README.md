@@ -13,12 +13,13 @@ Version 2 now records **both accelerometers during Record / Drop Test**:
 low-g at +/-16 g and high-g at +/-320 g, both at nominal 3840 Hz. The same
 five-second window retains 19,200 paired XYZ readings per sensor. Version 1
 continues low-g recording. Accel, Level, Gyro, Pendulum, Friction, Beam,
-Gentle Catch and orientation keep their existing ranges, rates and units.
-High-g is powered down outside version 2 drop recordings. Normal downloads use
+and orientation keep their existing ranges, rates and units. Gentle Catch now
+uses both accelerometers on version 2 for its peak measurement.
+High-g is powered down outside version 2 drop recordings and Gentle Catch. Normal downloads use
 EGG2 for paired recordings, preserving both raw streams plus low-g calibration;
-version 1 and Beam retain EGG1. The website opens both formats and provides a
-Low-g / High-g selector and CSV export of both streams. Automatic trace
-selection and extended Gentle Catch are future work.
+version 1 and Beam retain EGG1. The website opens both formats and provides an
+Automatic / Low-g / High-g selector and CSV export of both streams plus the
+automatic trace and per-sample source.
 Register compatibility was checked against ST's official
 [LSM6DSV320X driver](https://github.com/STMicroelectronics/lsm6dsv320x-pid).
 
@@ -337,3 +338,37 @@ Older firmware retains a tilt-only fallback. See `ORIENTATION_PROTOCOL.md`.
 
 GPIO16–21 are reserved for the LSM6DSV IMU; GPIO29 is the OUT+ voltage sense;
 the QSPI pins are flash signals. This bring-up project does not drive them.
+
+### Step 4: automatic acceleration selection
+
+The viewer defaults paired recordings to Automatic. A sample switches the whole
+XYZ vector to high-g when any calibrated or raw low-g axis reaches 12 g.
+It stays on high-g until every high-g, calibrated low-g and raw low-g axis is
+below 8 g. Thresholds apply to axes rather than vector magnitude. The raw
+low-g guard prevents calibration from masking the approach to clipping.
+No blending, offset matching or filter-delay correction is applied; independent
+sensor offsets and response can produce steps at transitions. Low-g stillness
+and freefall detection are unchanged. Version 1 retains its low-g clipping.
+
+Gentle Catch uses the same hysteresis on version 2 and reports a peak axis
+up to the high-g range instead of stopping at 16 g. Its result uses a wider
+integer without allocating another sample buffer; large OLED readings use whole
+g rather than decimals to fit. FIFO failures stop the challenge without changing
+any protected recording. The five-second recording buffers remain 230,400 bytes.
+
+The .egg format and original bytes are unchanged. CSV preserves its first 18
+dual-stream columns and appends Auto X/Y/Z/magnitude, Auto source (low/high),
+and Auto clipped. Source selection is independent of which chart is displayed.
+Old single-stream CSV remains unchanged. Existing EGG2 recordings also gain the
+automatic trace. Gyro and the other low-g activities keep their existing settings.
+
+Validation includes ARM boundary/overflow tests for the selector and wider peak
+conversion, plus synthetic viewer tests for an abrupt 100 g impact, hysteresis,
+clipping, source selection and legacy downloads. Physical impacts above 16 g,
+sensor alignment/delay, and Gentle Catch menu trials still need bench validation.
+
+Step 4 bench verification (October 21): flash verification passed on COM38,
+LSM6DSV320X 0x73 and OLED OK. A new 19,200-pair capture completed with no FIFO
+overrun, sequence/tag/I/O errors; EGG2 header/data CRCs and raw-stream identity
+passed. Peak switching is tested synthetically; this stationary bench recording
+does not validate real high-g impacts or Gentle Catch scoring on the device.

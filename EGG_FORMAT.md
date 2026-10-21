@@ -80,3 +80,14 @@ in README. It is not a normal `.egg` recording and is not accepted by the
 website. Its payload is identical to the corresponding EGG2 raw payload; the
 headers and metadata differ. Use it for validation, not as a substitute for
 the calibrated/multi-sensor recording format.
+
+## Automatic display (no file-format change)
+
+The viewer derives an automatic XYZ vector from EGG2: switch to high-g when any
+raw or calibrated low-g axis is at least 12 g, and return only when all axes on
+both representations of low-g and on high-g are below 8 g. All axes switch
+together. Clipping follows the selected sensor. Both original streams remain
+available; low-g alone drives flight estimates. Sensor offsets/filter delays
+are not corrected by automatic selection. CSV appends the combined vector,
+magnitude, low/high source and selected clipping flag after the original
+18 dual-stream columns. Saved binary bytes remain unchanged.
