@@ -383,7 +383,7 @@ Alarm callbacks advance notes and stop the output even during display/USB work.
 Status cues preempt button clicks; a failed alarm allocation immediately silences
 the pin. All sound control calls are on core 0.
 
-Startup plays C7-E7-G7-E7-C8 over 900 ms alongside the three-LED sequence.
+Startup plays G6-B6-D7-B6-G7 (1.57-3.14 kHz) over 900 ms alongside the three-LED sequence.
 It adds no startup delay and returns GPIO22 low when finished.
 
 Cues: button 3000 Hz / 12 ms; ready 2400 then 3000 Hz; recording event 3600 Hz /

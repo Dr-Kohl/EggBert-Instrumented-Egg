@@ -60,11 +60,11 @@ int sound_test(void) {
         CHECK(!enabled && !pin_high && sound_current_cue()==-1);
     }
     sound_play(SOUND_STARTUP);
-    CHECK(duration==120 && applied.wrap==477);
-    CHECK(callback(id,NULL)==120000 && applied.wrap==378);
-    CHECK(callback(id,NULL)==180000 && applied.wrap==318);
-    CHECK(callback(id,NULL)==120000 && applied.wrap==378);
-    CHECK(callback(id,NULL)==360000 && applied.wrap==238);
+    CHECK(duration==120 && applied.wrap==637);
+    CHECK(callback(id,NULL)==120000 && applied.wrap==505);
+    CHECK(callback(id,NULL)==180000 && applied.wrap==425);
+    CHECK(callback(id,NULL)==120000 && applied.wrap==505);
+    CHECK(callback(id,NULL)==360000 && applied.wrap==318);
     CHECK(callback(id,NULL)==0 && !enabled && function==GPIO_FUNC_SIO);
     int old_adds=adds; sound_play((sound_cue_t)99); CHECK(adds==old_adds);
     CHECK(depth==0 && !failed);
