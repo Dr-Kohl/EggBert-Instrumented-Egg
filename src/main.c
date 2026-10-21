@@ -380,21 +380,55 @@ static void ui_menu_item(uint8_t y, const char *text, bool selected) {
     ssd1306_ui_text(17, y, text, !selected);
 }
 
+static void home_menu_item(uint8_t y, const char *text, bool selected) {
+    if (selected) ssd1306_ui_fill_rect(0, (uint8_t)(y-1u), 64, 10, true);
+    ssd1306_ui_text(2, y, text, !selected);
+}
+
 static void show_home(void) {
     if (!oled_ok) return;
-    bool second_page = ui_selection >= 6 && ui_selection <= 8;
-    ui_begin(second_page ? "HOME 2" : "HOME 1", "I");
-    if (second_page) {
-        ui_menu_item(25, "BEAM", ui_selection == 6);
-        ui_menu_item(38, "RAW XYZ", ui_selection == 7);
-        ui_menu_item(51, "CAL", ui_selection == 8);
+    ssd1306_clear();
+    // Common full-width layout for white and yellow/blue panels. Power is
+    // shown independently of whether a computer/viewer is connected.
+    if (usb_power_present) {
+        ssd1306_ui_fill_rect(3, 3, 7, 4, true);
+        ssd1306_ui_fill_rect(4, 1, 1, 2, true);
+        ssd1306_ui_fill_rect(8, 1, 1, 2, true);
+        ssd1306_ui_fill_rect(6, 7, 1, 2, true);
+        ssd1306_ui_text(14, 1, "USB", true);
+    } else {
+        ssd1306_ui_fill_rect(2, 2, 9, 6, true);
+        ssd1306_ui_fill_rect(3, 3, 7, 4, false);
+        ssd1306_ui_fill_rect(11, 4, 1, 2, true);
+        unsigned bars = power_out_millivolts >= 4050u ? 3u :
+                        power_out_millivolts >= 3850u ? 2u :
+                        power_out_millivolts >= 3650u ? 1u : 0u;
+        for (unsigned bar=0; bar<bars; ++bar)
+            ssd1306_ui_fill_rect((uint8_t)(4+bar*2u), 4, 1, 2, true);
+        char volts[8];
+        unsigned tenths = (power_out_millivolts+50u)/100u;
+        snprintf(volts, sizeof volts, "%u.%uV", tenths/10u, tenths%10u);
+        ssd1306_ui_text(14, 1, volts, true);
     }
-    else {
-    ui_menu_item(25, "RECORD", ui_selection == 0); ui_menu_item(38, "CATCH", ui_selection == 1);
-    ui_menu_item(51, "PENDULUM", ui_selection == 2); ui_menu_item(64, "ACCEL (g)", ui_selection == 3);
-    ui_menu_item(77, "GYRO", ui_selection == 9); ui_menu_item(90, "LEVEL", ui_selection == 4);
-    ui_menu_item(103, "FRICTION", ui_selection == 5); }
-    ssd1306_ui_text(18, 116, "MID GO", true);
+    ssd1306_ui_text(50, 1, lsm6dsv_model()==LSM6DSV_MODEL_LSM6DSV320X ? "V2" :
+                   lsm6dsv_model()==LSM6DSV_MODEL_LSM6DSV ? "V1" : "V-", true);
+    ssd1306_ui_fill_rect(0, 11, 64, 1, true);
+    bool second_page = ui_selection >= 6 && ui_selection <= 8;
+    ssd1306_ui_text(2, 16, second_page ? "HOME 2" : "HOME 1", true);
+    if (second_page) {
+        home_menu_item(30, "BEAM", ui_selection == 6);
+        home_menu_item(43, "RAW XYZ", ui_selection == 7);
+        home_menu_item(56, "CALIBRATE", ui_selection == 8);
+    } else {
+        home_menu_item(30, "RECORD", ui_selection == 0);
+        home_menu_item(43, "CATCH", ui_selection == 1);
+        home_menu_item(56, "PENDULUM", ui_selection == 2);
+        home_menu_item(69, "ACCEL G", ui_selection == 3);
+        home_menu_item(82, "GYRO", ui_selection == 9);
+        home_menu_item(95, "LEVEL", ui_selection == 4);
+        home_menu_item(108, "FRICTION", ui_selection == 5);
+    }
+    ssd1306_ui_text(2, 120, "MID SELECT", true);
     ssd1306_show();
 }
 
@@ -1142,10 +1176,13 @@ static void sample_power(void) {
     // 3.3 V reference, 12-bit ADC, and a 2:1 divider from Out+ to ADC3.
     uint16_t measured_mv = (uint16_t)(((total / BATTERY_ADC_SAMPLES) * 6600u + 2047u) / 4095u);
     bool previous_usb_state = usb_power_present;
+    unsigned previous_tenths = (power_out_millivolts+50u)/100u;
     power_out_millivolts = measured_mv;
     if (usb_power_present) usb_power_present = measured_mv >= USB_PRESENT_CLEAR_MV;
     else usb_power_present = measured_mv > USB_PRESENT_SET_MV;
-    if (oled_ok && previous_usb_state != usb_power_present) show_ui();
+    if (oled_ok && (previous_usb_state != usb_power_present ||
+        (ui_state == UI_HOME && !usb_power_present &&
+         previous_tenths != (power_out_millivolts+50u)/100u))) show_ui();
 }
 
 static const char *capture_state_name(void) {

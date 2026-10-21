@@ -1,5 +1,23 @@
 # OLED Orientation and User Interface Design
 
+## October 21 revision: common full-width HOME
+
+The new all-white panels and original yellow/blue panels use one common layout.
+The portrait orientation remains 64 x 128. HOME now uses the entire width;
+the original panels simply show the leftmost text pixels in yellow.
+
+HOME's top row shows a plug and USB when USB power is present, or a battery
+icon and voltage rounded to 0.1 V when running on battery. USB indicates power,
+not a viewer connection or charging state. V1/V2 at the right is derived from
+the detected IMU; an unidentified IMU displays V- rather than a guessed version.
+A separator at y=11 precedes the page title and full-width menu rows. The
+existing item order, page switching and button actions are preserved.
+Battery voltage refreshes on HOME when its displayed tenth changes.
+
+This is phase one only. Activity screens and submenus retain the earlier
+yellow-rail geometry described below until they are individually reviewed.
+The display driver, rotation, sensor sampling and recording buffers are unchanged.
+
 ## Physical orientation
 
 The 0.96-inch 128x64 OLED has a fixed color split:
