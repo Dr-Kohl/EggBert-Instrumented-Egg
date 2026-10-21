@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Download and View a Capture | EggBert Tutorial</title>
   <link rel="stylesheet" href="../style.css?v=tutorial-1">
-  <link rel="stylesheet" href="tutorial.css">
+  <link rel="stylesheet" href="tutorial.css?v=full-width-1">
 </head>
 <body><main class="tutorial">
   <header class="brand"><img class="brand-logo" src="../assets/eccv-logo.png" alt="Engineering, Computing, and Christian Vocation"><h1>Download and View a Capture</h1></header>
@@ -17,11 +17,11 @@
   <ol>
     <li>Finish the experiment and wait for EggBert to show <strong>DONE</strong> or the completed recording result.</li>
     <li>Connect EggBert to your computer with a USB data cable.</li>
-    <li>Open the <a href="../index.html">Capture Viewer</a> in Chrome or Edge. Click <strong>Connect EggBert</strong>, select <strong>Pico - Board CDC</strong> in the browser chooser, then click <strong>Connect</strong>. The COM port number may vary.</li>
+    <li>Open the <a href="../index.html">Capture Viewer</a> in Chrome or Edge. Click <strong>Connect EggBert</strong>, select EggBert’s USB serial port (it may appear as <strong>Pico - Board CDC</strong>) in the browser chooser, then click <strong>Connect</strong>. The COM port number may vary.</li>
     <li>Click <strong>Download</strong> to transfer the stored recording and display its graph. A verified transfer releases the USB connection automatically.</li>
-    <li>Zoom in and click two points on the chart to measure elapsed time. Drag cursor <strong>A</strong> or <strong>B</strong> to refine the interval. Use <strong>Focus event</strong> or <strong>Full capture</strong> to adjust the view.</li>
+    <li>Zoom in, click <strong>Measure Δt</strong>, then click two points on the chart to measure elapsed time. Drag cursor <strong>A</strong> or <strong>B</strong> to refine the interval. Use <strong>Focus event</strong> or <strong>Full capture</strong> to adjust the view.</li>
     <li>Click <strong>Save .egg</strong> to keep the original recording. Use <strong>Export CSV</strong> to save data for Excel.</li>
   </ol>
-  <p><strong>Save the .egg file before erasing the recording on EggBert.</strong></p>
+  <h2>Version 2: Automatic, Low-g and High-g</h2><p>V2 recordings contain both accelerometers at each sample time. <strong>Automatic</strong> uses low-g for normal motion and switches the entire X/Y/Z vector to high-g when any low-g axis reaches 12 g. It returns when all axes on both sensors are below 8 g. Select Low-g or High-g to inspect either stream separately.</p><p>Both original streams remain in the .egg file. CSV includes both streams, the automatic trace and its per-sample source. High-g uses factory scaling and has independent offsets; small steps can appear at transitions. V1 and Beam retain their single low-g stream.</p><p><strong>Save the .egg file before erasing the recording on EggBert.</strong></p>
 </main></body>
 </html>

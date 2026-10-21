@@ -1,18 +1,19 @@
 # OLED Orientation and User Interface Design
 
-## October 21 revision: common full-width HOME
+## October 21 revision: common full-width interface
 
 The new all-white panels and original yellow/blue panels use one common layout.
-The portrait orientation remains 64 x 128. HOME now uses the entire width;
+The portrait orientation remains 64 x 128. All menus and activities use the entire width;
 the original panels simply show the leftmost text pixels in yellow.
 
-HOME's top row shows a plug and USB when USB power is present, or a battery
+Every screen's top row shows a plug and USB when USB power is present, or a battery
 icon and voltage rounded to 0.1 V when running on battery. USB indicates power,
 not a viewer connection or charging state. V1/V2 at the right is derived from
 the detected IMU; an unidentified IMU displays V- rather than a guessed version.
 A separator at y=11 precedes the page title and full-width menu rows. The
 existing item order, page switching and button actions are preserved.
-Battery voltage refreshes on HOME when its displayed tenth changes.
+Battery voltage refreshes on idle screens when its displayed tenth changes;
+active acquisition keeps its existing polling behavior.
 
 Follow-up: HOME 2 now orders BEAM, CALIBRATE, RAW XYZ, in both drawing and
 navigation. Calibration shows UP EXIT at every stage. The top button cancels
@@ -23,9 +24,24 @@ press writes it. A failed save leaves the previous active calibration intact
 and permits retry or cancellation. After successful save, UP EXIT or MID EXIT
 returns home while retaining the intentionally saved calibration.
 
-This is phase one only. Activity screens and submenus retain the earlier
-yellow-rail geometry described below until they are individually reviewed.
-The display driver, rotation, sensor sampling and recording buffers are unchanged.
+The top status row occupies y=0..8, a separator sits at y=11, and the title
+starts at (2,16). Body text starts below the title. Menu highlights span 64
+pixels; ten normal characters fit at x=2. Large catch results are centered.
+Friction's five-trial list, REARM and EXIT have separate rows beneath the header.
+Gyro and Level retain room for their readings and button hints. Lowercase unit
+letters map to uppercase glyphs, and slash is supported for DEG/S and progress.
+
+The production drawing functions were rendered in 46 representative states,
+including battery/V1, USB/V2, calibration, clipped catch, five friction trials,
+and Beam. The preview tool checks text bounds and exports the same framebuffers
+used for the website's screen images. Sampling, buffers and navigation logic
+are unchanged by this layout pass. Physical inspection of every activity still
+requires the board and its buttons.
+
+## Historical design notes
+
+The sections below explain the original yellow-rail design and rotation. The
+full-width geometry above supersedes the reserved content/status split.
 
 ## Physical orientation
 

@@ -345,51 +345,7 @@ static void leds(unsigned mask) {
     for (unsigned i = 0; i < 3; ++i) gpio_put(LEDS[i], (mask >> i) & 1u);
 }
 
-static void ui_draw_power_indicator(void) {
-    if (usb_power_present) {
-        // Tall plug icon, drawn as yellow pixels on the black status rail.
-        ssd1306_ui_fill_rect(4, 7, 9, 10, true);
-        ssd1306_ui_fill_rect(6, 2, 2, 5, true);
-        ssd1306_ui_fill_rect(10, 2, 2, 5, true);
-        ssd1306_ui_fill_rect(7, 17, 3, 12, true);
-        return;
-    }
-
-    unsigned bars = power_out_millivolts >= 4050u ? 3u :
-                    power_out_millivolts >= 3850u ? 2u :
-                    power_out_millivolts >= 3650u ? 1u : 0u;
-    // Tall battery outline and stacked bars, all yellow on the black rail.
-    ssd1306_ui_fill_rect(4, 3, 8, 2, true);
-    ssd1306_ui_fill_rect(2, 5, 2, 24, true);
-    ssd1306_ui_fill_rect(12, 5, 2, 24, true);
-    ssd1306_ui_fill_rect(4, 29, 8, 2, true);
-    ssd1306_ui_fill_rect(6, 0, 4, 3, true);
-    for (unsigned bar = 0; bar < bars; ++bar)
-        ssd1306_ui_fill_rect(5, (uint8_t)(23u - bar * 6u), 6, 3, true);
-}
-
-static void ui_begin(const char *title, const char *rail_status) {
-    ssd1306_clear();
-    // The physical yellow band maps to this black status rail. Only its
-    // meaningful pixels are illuminated, so it does not overpower the UI.
-    ui_draw_power_indicator();
-    ssd1306_ui_text(5, 40, rail_status, true);
-    ssd1306_ui_text(18, 4, title, true);
-}
-
-static void ui_menu_item(uint8_t y, const char *text, bool selected) {
-    if (selected) ssd1306_ui_fill_rect(17, (uint8_t)(y - 1u), 47, 10, true);
-    ssd1306_ui_text(17, y, text, !selected);
-}
-
-static void home_menu_item(uint8_t y, const char *text, bool selected) {
-    if (selected) ssd1306_ui_fill_rect(0, (uint8_t)(y-1u), 64, 10, true);
-    ssd1306_ui_text(2, y, text, !selected);
-}
-
-static void show_home(void) {
-    if (!oled_ok) return;
-    ssd1306_clear();
+static void ui_draw_status_header(void) {
     // Common full-width layout for white and yellow/blue panels. Power is
     // shown independently of whether a computer/viewer is connected.
     if (usb_power_present) {
@@ -415,20 +371,37 @@ static void show_home(void) {
     ssd1306_ui_text(50, 1, lsm6dsv_model()==LSM6DSV_MODEL_LSM6DSV320X ? "V2" :
                    lsm6dsv_model()==LSM6DSV_MODEL_LSM6DSV ? "V1" : "V-", true);
     ssd1306_ui_fill_rect(0, 11, 64, 1, true);
+}
+
+static void ui_begin(const char *title, const char *status) {
+    (void)status; // The full screen title now carries the activity state.
+    ssd1306_clear();
+    ui_draw_status_header();
+    ssd1306_ui_text(2, 16, title, true);
+}
+
+static void ui_menu_item(uint8_t y, const char *text, bool selected) {
+    if (selected) ssd1306_ui_fill_rect(0, (uint8_t)(y-1u), 64, 10, true);
+    ssd1306_ui_text(2, y, text, !selected);
+}
+
+static void show_home(void) {
+    if (!oled_ok) return;
+    ui_begin("", "I");
     bool second_page = ui_selection >= 6 && ui_selection <= 8;
     ssd1306_ui_text(2, 16, second_page ? "HOME 2" : "HOME 1", true);
     if (second_page) {
-        home_menu_item(30, "BEAM", ui_selection == 6);
-        home_menu_item(43, "CALIBRATE", ui_selection == 8);
-        home_menu_item(56, "RAW XYZ", ui_selection == 7);
+        ui_menu_item(30, "BEAM", ui_selection == 6);
+        ui_menu_item(43, "CALIBRATE", ui_selection == 8);
+        ui_menu_item(56, "RAW XYZ", ui_selection == 7);
     } else {
-        home_menu_item(30, "RECORD", ui_selection == 0);
-        home_menu_item(43, "CATCH", ui_selection == 1);
-        home_menu_item(56, "PENDULUM", ui_selection == 2);
-        home_menu_item(69, "ACCEL G", ui_selection == 3);
-        home_menu_item(82, "GYRO", ui_selection == 9);
-        home_menu_item(95, "LEVEL", ui_selection == 4);
-        home_menu_item(108, "FRICTION", ui_selection == 5);
+        ui_menu_item(30, "RECORD", ui_selection == 0);
+        ui_menu_item(43, "CATCH", ui_selection == 1);
+        ui_menu_item(56, "PENDULUM", ui_selection == 2);
+        ui_menu_item(69, "ACCEL G", ui_selection == 3);
+        ui_menu_item(82, "GYRO", ui_selection == 9);
+        ui_menu_item(95, "LEVEL", ui_selection == 4);
+        ui_menu_item(108, "FRICTION", ui_selection == 5);
     }
     ssd1306_ui_text(2, 120, "MID SELECT", true);
     ssd1306_show();
@@ -454,33 +427,33 @@ static void format_acceleration(char *text, size_t text_size, char axis, int32_t
 static void show_acceleration(void) {
     if (!oled_ok) return;
     char text[13];
-    ui_begin("ACCELERATION", "I");
+    ui_begin("ACCEL G", "I");
     format_acceleration(text, sizeof text, 'X', live_accel_x);
-    ssd1306_ui_text(18, 28, text, true);
+    ssd1306_ui_text(2, 30, text, true);
     format_acceleration(text, sizeof text, 'Y', live_accel_y);
-    ssd1306_ui_text(18, 44, text, true);
+    ssd1306_ui_text(2, 44, text, true);
     format_acceleration(text, sizeof text, 'Z', live_accel_z);
-    ssd1306_ui_text(18, 60, text, true);
+    ssd1306_ui_text(2, 60, text, true);
     int32_t magnitude = (int32_t)sqrtf((float)live_accel_x * live_accel_x +
                                        (float)live_accel_y * live_accel_y +
                                        (float)live_accel_z * live_accel_z);
     format_acceleration(text, sizeof text, 'M', magnitude);
-    ssd1306_ui_text(18, 82, text, true);
-    ssd1306_ui_text(18, 112, "MID EXIT", true);
+    ssd1306_ui_text(2, 82, text, true);
+    ssd1306_ui_text(2, 112, "MID EXIT", true);
     ssd1306_show();
 }
 
 static void show_gyro(void) {
     if (!oled_ok) return;
     ui_begin("GYRO", "I");
-    ssd1306_ui_text(18, 24, gyro_peak_view ? "PEAK" : "LIVE", true);
-    ssd1306_ui_text(18, 38, "deg/s", true);
+    ssd1306_ui_text(2, 30, gyro_peak_view ? "PEAK" : "LIVE", true);
+    ssd1306_ui_text(2, 42, "DEG/S", true);
     if (!gyro_ok) {
-        ssd1306_ui_text(18, 54, "IMU ERR", true);
+        ssd1306_ui_text(2, 54, "IMU ERR", true);
     } else if (gyro_session.phase == GYRO_SETTLING || gyro_session.phase == GYRO_ZEROING) {
-        ssd1306_ui_text(18, 54, "HOLD", true);
-        ssd1306_ui_text(18, 68, "STILL", true);
-        ssd1306_ui_text(18, 82, "ZEROING", true);
+        ssd1306_ui_text(2, 54, "HOLD", true);
+        ssd1306_ui_text(2, 68, "STILL", true);
+        ssd1306_ui_text(2, 82, "ZEROING", true);
     } else {
         const int32_t *values = gyro_peak_view ? gyro_session.peak_mdps : gyro_session.live_mdps;
         for (unsigned axis = 0; axis < 3; ++axis) {
@@ -488,15 +461,15 @@ static void show_gyro(void) {
             unsigned speed = (unsigned)((gyro_abs(mdps) + 500) / 1000);
             char text[12];
             snprintf(text, sizeof text, "%c %c%u", "XYZ"[axis], mdps < 0 ? '-' : '+', speed);
-            ssd1306_ui_text(18, (uint8_t)(54 + axis * 14), text, true);
+            ssd1306_ui_text(2, (uint8_t)(54 + axis * 14), text, true);
         }
         bool limit = gyro_peak_view ? gyro_session.peak_limit : gyro_session.live_limit;
-        if (gyro_session.phase == GYRO_RESET_WAIT) ssd1306_ui_text(18, 91, "WAIT", true);
-        else if (limit) ssd1306_ui_text(18, 91, "LIMIT", true);
+        if (gyro_session.phase == GYRO_RESET_WAIT) ssd1306_ui_text(2, 91, "WAIT", true);
+        else if (limit) ssd1306_ui_text(2, 91, "LIMIT", true);
     }
-    ssd1306_ui_text(18, 100, "UP VIEW", true);
-    ssd1306_ui_text(18, 109, "MID RST", true);
-    ssd1306_ui_text(18, 118, "DN EXIT", true);
+    ssd1306_ui_text(2, 100, "UP VIEW", true);
+    ssd1306_ui_text(2, 109, "MID RST", true);
+    ssd1306_ui_text(2, 118, "DN EXIT", true);
     ssd1306_show();
 }
 
@@ -543,16 +516,16 @@ static void show_raw_xyz(void) {
     if (!oled_ok) return;
     char raw[8];
     ui_begin("RAW XYZ", "I");
-    ssd1306_ui_text(18, 28, "X", true);
+    ssd1306_ui_text(2, 30, "X", true);
     snprintf(raw, sizeof raw, "%d", live_accel_x);
-    ssd1306_ui_text(28, 28, raw, true);
-    ssd1306_ui_text(18, 44, "Y", true);
+    ssd1306_ui_text(14, 30, raw, true);
+    ssd1306_ui_text(2, 44, "Y", true);
     snprintf(raw, sizeof raw, "%d", live_accel_y);
-    ssd1306_ui_text(28, 44, raw, true);
-    ssd1306_ui_text(18, 60, "Z", true);
+    ssd1306_ui_text(14, 44, raw, true);
+    ssd1306_ui_text(2, 60, "Z", true);
     snprintf(raw, sizeof raw, "%d", live_accel_z);
-    ssd1306_ui_text(28, 60, raw, true);
-    ssd1306_ui_text(18, 112, "MID EXIT", true);
+    ssd1306_ui_text(14, 60, raw, true);
+    ssd1306_ui_text(2, 112, "MID EXIT", true);
     ssd1306_show();
 }
 
@@ -590,10 +563,10 @@ static void show_inclinometer(void) {
     format_tilt(x_text, sizeof x_text, 'X', x_degrees);
     format_tilt(y_text, sizeof y_text, 'Y', y_degrees);
     ui_begin("LEVEL", "I");
-    ssd1306_ui_text(18, 22, "DEGREES", true);
-    ssd1306_ui_text_double_height(18, 36, x_text, true);
-    ssd1306_ui_text_double_height(18, 62, y_text, true);
-    ssd1306_ui_text(18, 112, "MID EXIT", true);
+    ssd1306_ui_text(2, 26, "DEGREES", true);
+    ssd1306_ui_text_double_height(2, 36, x_text, true);
+    ssd1306_ui_text_double_height(2, 62, y_text, true);
+    ssd1306_ui_text(2, 112, "MID EXIT", true);
     ssd1306_show();
 }
 
@@ -712,50 +685,53 @@ static void show_friction(void) {
     if (!oled_ok) return;
     char line[14];
     char mu[8];
-    ui_begin("", "I");
+    ui_begin(friction_state==FRICTION_SUMMARY ? "TRIALS" : "FRICTION", "I");
     if (friction_state == FRICTION_READY) {
-        ssd1306_ui_text(16, 32, "SET LOW", true);
-        ssd1306_ui_text(16, 46, "MID ARM", true);
+        ssd1306_ui_text(2, 32, "SET LOW", true);
+        ssd1306_ui_text(2, 46, "MID ARM", true);
+        ssd1306_ui_text(2, 112, "UP HOME", true);
     } else if (friction_state == FRICTION_ARMED) {
         if (friction_waiting_to_arm) {
-            ssd1306_ui_text(16, 32, "SET DOWN", true);
-            ssd1306_ui_text(16, 47, "AUTO ARM", true);
+            ssd1306_ui_text(2, 32, "SET DOWN", true);
+            ssd1306_ui_text(2, 47, "AUTO ARM", true);
         } else {
-            ssd1306_ui_text(16, 32, "TILT SLOW", true);
+            ssd1306_ui_text(2, 32, "TILT SLOW", true);
             format_friction_value(line, sizeof line, "ANG ", friction_last_stable_angle);
-            ssd1306_ui_text(16, 47, line, true);
-            ssd1306_ui_text(16, 62, "MID STOP", true);
+            ssd1306_ui_text(2, 47, line, true);
+            ssd1306_ui_text(2, 62, "MID STOP", true);
         }
     } else if (friction_state == FRICTION_RESULT) {
         snprintf(line, sizeof line, "TRIAL %u", (unsigned)friction_trial_count);
-        ssd1306_ui_text(16, 26, line, true);
+        ssd1306_ui_text(2, 30, line, true);
         format_friction_value(line, sizeof line, "ANG ", friction_trial_angles[friction_trial_count - 1u]);
-        ssd1306_ui_text(16, 40, line, true);
+        ssd1306_ui_text(2, 40, line, true);
         format_friction_mu(mu, sizeof mu, friction_trial_mu[friction_trial_count - 1u]);
         snprintf(line, sizeof line, "MU %s", mu);
-        ssd1306_ui_text(16, 54, line, true);
+        ssd1306_ui_text(2, 54, line, true);
         format_friction_mu(mu, sizeof mu, friction_average_mu());
         snprintf(line, sizeof line, "AVG %s", mu);
-        ssd1306_ui_text(16, 68, line, true);
-        ssd1306_ui_text(16, 112, "MID AGAIN", true);
+        ssd1306_ui_text(2, 68, line, true);
+        ssd1306_ui_text(2, 88, "UP HOME", true);
+        ssd1306_ui_text(2, 100, "MID AGAIN", true);
+        ssd1306_ui_text(2, 112, "DN LIST", true);
     } else {
         format_friction_mu(mu, sizeof mu, friction_average_mu());
         snprintf(line, sizeof line, "AVG %s", mu);
-        ssd1306_ui_text(16, 4, line, true);
+        ssd1306_ui_text(2, 30, line, true);
         for (unsigned i = 0; i < friction_trial_count; ++i) {
-            uint8_t y = (uint8_t)(20u + 12u * i);
+            uint8_t y = (uint8_t)(44u + 11u * i);
             bool selected = friction_summary_selection == i;
-            if (selected) ssd1306_ui_fill_rect(17, (uint8_t)(y - 1u), 96, 10, true);
+            if (selected) ssd1306_ui_fill_rect(0, (uint8_t)(y - 1u), 64, 10, true);
             format_friction_mu(mu, sizeof mu, friction_trial_mu[i]);
             snprintf(line, sizeof line, "T%u %s", i + 1u, mu);
-            ssd1306_ui_text(16, y, line, !selected);
+            ssd1306_ui_text(2, y, line, !selected);
         }
         bool rearm_selected = friction_summary_selection == friction_trial_count;
         bool exit_selected = friction_summary_selection == friction_trial_count + 1u;
-        if (rearm_selected) ssd1306_ui_fill_rect(17, 91, 47, 10, true);
-        ssd1306_ui_text(16, 92, "REARM", !rearm_selected);
-        if (exit_selected) ssd1306_ui_fill_rect(17, 103, 47, 10, true);
-        ssd1306_ui_text(16, 104, "EXIT", !exit_selected);
+        if (rearm_selected) ssd1306_ui_fill_rect(0, 103, 64, 10, true);
+        ssd1306_ui_text(2, 104, "REARM", !rearm_selected);
+        if (exit_selected) ssd1306_ui_fill_rect(0, 115, 64, 10, true);
+        ssd1306_ui_text(2, 116, "EXIT", !exit_selected);
     }
     ssd1306_show();
 }
@@ -814,18 +790,20 @@ static void pendulum_process_sample(void) {
 static void show_pendulum(void) {
     if (!oled_ok) return;
     char line[12];
-    ui_begin("PEND", "I");
+    ui_begin("PENDULUM", "I");
     if (pendulum_state == PENDULUM_READY) {
-        ssd1306_ui_text(16, 32, "HOLD UP", true);
-        ssd1306_ui_text(16, 46, "MID ARM", true);
+        ssd1306_ui_text(2, 32, "HOLD UP", true);
+        ssd1306_ui_text(2, 46, "MID ARM", true);
+        ssd1306_ui_text(2, 112, "UP HOME", true);
     } else if (pendulum_state == PENDULUM_WAITING) {
-        ssd1306_ui_text(16, 32, "HOLD", true);
-        ssd1306_ui_text(16, 47, "AUTO ARM", true);
+        ssd1306_ui_text(2, 32, "HOLD", true);
+        ssd1306_ui_text(2, 47, "AUTO ARM", true);
+        ssd1306_ui_text(2, 112, "UP HOME", true);
     } else if (pendulum_state == PENDULUM_MEASURING) {
-        ssd1306_ui_text(16, 32, "RELEASE", true);
+        ssd1306_ui_text(2, 32, "RELEASE", true);
         snprintf(line, sizeof line, "PEAK %u/4", (unsigned)pendulum_period_count);
-        ssd1306_ui_text(16, 47, line, true);
-        ssd1306_ui_text(16, 62, "MID STOP", true);
+        ssd1306_ui_text(2, 47, line, true);
+        ssd1306_ui_text(2, 62, "MID STOP", true);
     } else {
         float period_seconds = (float)pendulum_period_total_ms /
                                ((float)pendulum_period_count * 1000.0f);
@@ -836,13 +814,13 @@ static void show_pendulum(void) {
         snprintf(line, sizeof line, "PER %lu.%02lu",
                  (unsigned long)(period_hundredths / 100u),
                  (unsigned long)(period_hundredths % 100u));
-        ssd1306_ui_text(16, 32, line, true);
+        ssd1306_ui_text(2, 32, line, true);
         snprintf(line, sizeof line, "LEN %lu.%lu",
                  (unsigned long)(length_tenths / 10u),
                  (unsigned long)(length_tenths % 10u));
-        ssd1306_ui_text(16, 47, line, true);
-        ssd1306_ui_text(16, 62, "MID AGAIN", true);
-        ssd1306_ui_text(16, 112, "DN EXIT", true);
+        ssd1306_ui_text(2, 47, line, true);
+        ssd1306_ui_text(2, 62, "MID AGAIN", true);
+        ssd1306_ui_text(2, 112, "DN EXIT", true);
     }
     ssd1306_show();
 }
@@ -852,37 +830,38 @@ static void show_beam(void) {
     if (!oled_ok) return;
     char line[12]; ui_begin("BEAM", "I");
     if (beam_state == BEAM_READY) {
-        ssd1306_ui_text(16,32,"CLAMP",true);
-        ssd1306_ui_text(16,46,"MID ARM",true);
-        ssd1306_ui_text(16,62,"480 HZ",true);
-        ssd1306_ui_text(16,76,"15 SEC",true);
+        ssd1306_ui_text(2,32,"CLAMP",true);
+        ssd1306_ui_text(2,46,"MID ARM",true);
+        ssd1306_ui_text(2,62,"480 HZ",true);
+        ssd1306_ui_text(2,76,"15 SEC",true);
+        ssd1306_ui_text(2,112,"UP HOME",true);
     } else if (beam_state == BEAM_WAITING) {
-        ssd1306_ui_text(16,32,"HOLD",true);
-        ssd1306_ui_text(16,46,"STILL",true);
-        ssd1306_ui_text(16,112,"MID STOP",true);
+        ssd1306_ui_text(2,32,"HOLD",true);
+        ssd1306_ui_text(2,46,"STILL",true);
+        ssd1306_ui_text(2,112,"MID STOP",true);
     } else if (beam_state == BEAM_LISTENING) {
-        ssd1306_ui_text(16,32,"READY",true);
-        ssd1306_ui_text(16,46,"FLICK",true);
-        ssd1306_ui_text(16,62,"0.2 G",true);
-        ssd1306_ui_text(16,112,"MID STOP",true);
+        ssd1306_ui_text(2,32,"READY",true);
+        ssd1306_ui_text(2,46,"FLICK",true);
+        ssd1306_ui_text(2,62,"0.2 G",true);
+        ssd1306_ui_text(2,112,"MID STOP",true);
     } else if (beam_state == BEAM_RECORDING) {
         unsigned remaining = (capture_target-capture_pretrigger-1u-post_trigger_samples+BEAM_RATE_HZ-1u)/BEAM_RATE_HZ;
         snprintf(line,sizeof line,"LEFT %u S",remaining);
-        ssd1306_ui_text(16,32,"RECORD",true);
-        ssd1306_ui_text(16,48,line,true);
+        ssd1306_ui_text(2,32,"RECORD",true);
+        ssd1306_ui_text(2,48,line,true);
     } else {
         if (beam_result_hz > 0) {
             unsigned hundredths = (unsigned)(beam_result_hz*100+0.5f);
             snprintf(line,sizeof line,"HZ %u.%02u",hundredths/100,hundredths%100);
-            ssd1306_ui_text(16,32,line,true);
-            ssd1306_ui_text(16,46,"ESTIMATE",true);
+            ssd1306_ui_text(2,32,line,true);
+            ssd1306_ui_text(2,46,"ESTIMATE",true);
         } else {
-            ssd1306_ui_text(16,32,"NO CLEAR",true);
-            ssd1306_ui_text(16,46,"PERIOD",true);
+            ssd1306_ui_text(2,32,"NO CLEAR",true);
+            ssd1306_ui_text(2,46,"PERIOD",true);
         }
-        if (capture_clipped) ssd1306_ui_text(16,62,"CLIPPED",true);
-        ssd1306_ui_text(16,78,"USB DL",true);
-        ssd1306_ui_text(16,112,"MID OPT",true);
+        if (capture_clipped) ssd1306_ui_text(2,62,"CLIPPED",true);
+        ssd1306_ui_text(2,78,"USB DL",true);
+        ssd1306_ui_text(2,112,"MID OPT",true);
     }
     ssd1306_show();
 }
@@ -890,50 +869,50 @@ static void show_beam(void) {
 static void show_record_menu(void) {
     if (!oled_ok) return;
     ui_begin("RECORD", "I");
-    ui_menu_item(25, "DROP", ui_selection == 0);
-    ui_menu_item(38, "BACK", ui_selection == 1);
-    ssd1306_ui_text(18, 112, "MID GO", true);
+    ui_menu_item(30, "DROP", ui_selection == 0);
+    ui_menu_item(43, "BACK", ui_selection == 1);
+    ssd1306_ui_text(2, 112, "MID GO", true);
     ssd1306_show();
 }
 
 static void show_drop_test_menu(void) {
     if (!oled_ok) return;
     ui_begin("DROP", "I");
-    ui_menu_item(25, "ARM", ui_selection == 0);
-    ui_menu_item(38, "BACK", ui_selection == 1);
-    ssd1306_ui_text(18, 112, "MID GO", true);
+    ui_menu_item(30, "ARM", ui_selection == 0);
+    ui_menu_item(43, "BACK", ui_selection == 1);
+    ssd1306_ui_text(2, 112, "MID GO", true);
     ssd1306_show();
 }
 
 static void show_challenges_menu(void) {
     if (!oled_ok) return;
-    ui_begin("GAMES", "I");
-    ui_menu_item(25, "GENTLE", ui_selection == 0);
-    ui_menu_item(38, "BACK", ui_selection == 1);
-    ssd1306_ui_text(18, 112, "MID GO", true);
+    ui_begin("CATCH", "I");
+    ui_menu_item(30, "GENTLE", ui_selection == 0);
+    ui_menu_item(43, "BACK", ui_selection == 1);
+    ssd1306_ui_text(2, 112, "MID GO", true);
     ssd1306_show();
 }
 
 static void show_gentle_ready(void) {
     if (!oled_ok) return;
     ui_begin("CATCH", "G");
-    ssd1306_ui_text(18, 36, "READY", true);
-    ssd1306_ui_text(18, 48, "THROW", true);
+    ssd1306_ui_text(2, 36, "READY", true);
+    ssd1306_ui_text(2, 48, "THROW", true);
     ssd1306_show();
 }
 
 static void show_gentle_fall(void) {
     if (!oled_ok) return;
     ui_begin("CATCH", "G");
-    ssd1306_ui_text(18, 36, "FALL", true);
-    ssd1306_ui_text(18, 48, "CATCH", true);
+    ssd1306_ui_text(2, 36, "FALL", true);
+    ssd1306_ui_text(2, 48, "CATCH", true);
     ssd1306_show();
 }
 
 static void show_gentle_measure(void) {
     if (!oled_ok) return;
     ui_begin("CATCH", "G");
-    ssd1306_ui_text(18, 36, "MEASURE", true);
+    ssd1306_ui_text(2, 36, "MEASURE", true);
     ssd1306_show();
 }
 
@@ -948,31 +927,30 @@ static void show_gentle_result(void) {
              score == GENTLE_SCORE_GENTLE ? "GENTLE" :
              score == GENTLE_SCORE_FIRM ? "FIRM" : "HARD", "G");
     if (gentle_saturated) {
-        ssd1306_ui_text(18, 36, "PEAK", true);
-        ssd1306_ui_text_scaled(gentle_has_highg ? 17 : 24, 48, gentle_has_highg ? "320" : "16", true, 2);
-        ssd1306_ui_text_scaled(20, 70, "G+", true, 2);
+        ssd1306_ui_text(2, 36, "PEAK", true);
+        ssd1306_ui_text_scaled(gentle_has_highg ? 15 : 21, 48, gentle_has_highg ? "320" : "16", true, 2);
+        ssd1306_ui_text_scaled(21, 70, "G+", true, 2);
     } else {
         if (gentle_peak_axis_counts >= 100u*ACCEL_COUNTS_PER_G)
             snprintf(peak, sizeof peak, "%lu", (unsigned long)(gentle_peak_axis_counts / ACCEL_COUNTS_PER_G));
         else snprintf(peak, sizeof peak, "%lu.%lu",
                  (unsigned long)(gentle_peak_axis_counts / ACCEL_COUNTS_PER_G),
                  (unsigned long)((gentle_peak_axis_counts % ACCEL_COUNTS_PER_G) * 10u / ACCEL_COUNTS_PER_G));
-        ssd1306_ui_text(18, 36, "PEAK", true);
-        // Four two-times glyphs fit from x=17 through x=62, entirely to the
-        // right of the yellow status rail.  The unit gets its own large line.
-        ssd1306_ui_text_scaled(17, 48, peak, true, 2);
-        ssd1306_ui_text_scaled(26, 70, "G", true, 2);
+        ssd1306_ui_text(2, 36, "PEAK", true);
+        // Center the large peak in the full-width canvas; units use a separate line.
+        ssd1306_ui_text_scaled((uint8_t)((64u-(strlen(peak)*12u-2u))/2u), 48, peak, true, 2);
+        ssd1306_ui_text_scaled(27, 70, "G", true, 2);
     }
-    ssd1306_ui_text(18, 112, "MID EXIT", true);
+    ssd1306_ui_text(2, 112, "MID EXIT", true);
     ssd1306_show();
 }
 
 static void show_capture_wait_still(void) {
     if (!oled_ok) return;
     ui_begin("RECORD", "A");
-    ssd1306_ui_text(18, 34, "HOLD", true);
-    ssd1306_ui_text(18, 46, "STILL", true);
-    ssd1306_ui_text(18, 112, "ARMING", true);
+    ssd1306_ui_text(2, 34, "HOLD", true);
+    ssd1306_ui_text(2, 46, "STILL", true);
+    ssd1306_ui_text(2, 112, "ARMING", true);
     ssd1306_show();
 }
 
@@ -980,8 +958,8 @@ static void show_capture_armed(void) {
     sound_play(SOUND_READY);
     if (!oled_ok) return;
     ui_begin("READY", "R");
-    ssd1306_ui_text(18, 36, "WAIT", true);
-    ssd1306_ui_text(18, 48, "DROP", true);
+    ssd1306_ui_text(2, 36, "WAIT", true);
+    ssd1306_ui_text(2, 48, "DROP", true);
     ssd1306_show();
 }
 
@@ -989,9 +967,9 @@ static void show_capture_event(void) {
     sound_play(SOUND_RECORDING);
     if (!oled_ok) return;
     ui_begin(trigger_was_freefall ? "FALL" : "IMPACT", "E");
-    ssd1306_ui_text(18, 36, "EVENT", true);
-    ssd1306_ui_text(18, 48, "FOUND", true);
-    ssd1306_ui_text(18, 112, "SAVING", true);
+    ssd1306_ui_text(2, 36, "EVENT", true);
+    ssd1306_ui_text(2, 48, "FOUND", true);
+    ssd1306_ui_text(2, 112, "SAVING", true);
     ssd1306_show();
 }
 
@@ -999,27 +977,27 @@ static void show_capture_complete(void) {
     if (capture_is_beam) { beam_state=BEAM_RESULT; show_beam(); return; }
     if (!oled_ok) return;
     ui_begin("DONE", "D");
-    ssd1306_ui_text(18, 36, "USB", true);
-    ssd1306_ui_text(18, 48, "DL", true);
-    ssd1306_ui_text(18, 112, "MID OPT", true);
+    ssd1306_ui_text(2, 36, "USB", true);
+    ssd1306_ui_text(2, 48, "DL", true);
+    ssd1306_ui_text(2, 112, "MID OPT", true);
     ssd1306_show();
 }
 
 static void show_capture_options(void) {
     if (!oled_ok) return;
     ui_begin("SAVED", "D");
-    ui_menu_item(25, "ERASE", ui_selection == 0);
-    ui_menu_item(38, "BACK", ui_selection == 1);
-    ssd1306_ui_text(18, 112, "MID GO", true);
+    ui_menu_item(30, "ERASE", ui_selection == 0);
+    ui_menu_item(43, "BACK", ui_selection == 1);
+    ssd1306_ui_text(2, 112, "MID GO", true);
     ssd1306_show();
 }
 
 static void show_erase_confirm(void) {
     if (!oled_ok) return;
     ui_begin("ERASE", "D");
-    ui_menu_item(25, "NO", ui_selection == 0);
-    ui_menu_item(38, "YES", ui_selection == 1);
-    ssd1306_ui_text(18, 112, "MID GO", true);
+    ui_menu_item(30, "NO", ui_selection == 0);
+    ui_menu_item(43, "YES", ui_selection == 1);
+    ssd1306_ui_text(2, 112, "MID GO", true);
     ssd1306_show();
 }
 
@@ -1052,33 +1030,33 @@ static void calibration_start_collection(void) {
 
 static void show_calibration(void) {
     if (!oled_ok) return;
-    ui_begin("CAL", "I");
+    ui_begin("CALIBRATE", "I");
     char progress[10];
     snprintf(progress, sizeof progress, "%u OF 6",
              (unsigned)__builtin_popcount(calibration_faces_seen));
-    ssd1306_ui_text(18, 25, progress, true);
+    ssd1306_ui_text(2, 30, progress, true);
     if (calibration_complete) {
-        ssd1306_ui_text(18, 38, "SAVED", true);
-        ssd1306_ui_text(16, 112, "MID EXIT", true);
+        ssd1306_ui_text(2, 43, "SAVED", true);
+        ssd1306_ui_text(2, 112, "MID EXIT", true);
     } else if (calibration_ready_to_save) {
-        ssd1306_ui_text(18, 45, calibration_feedback[0] ? "SAVE ERR" : "READY", true);
-        ssd1306_ui_text(16, 112, "MID SAVE", true);
+        ssd1306_ui_text(2, 45, calibration_feedback[0] ? "SAVE ERR" : "READY", true);
+        ssd1306_ui_text(2, 112, "MID SAVE", true);
     } else if (calibration_armed) {
-        ssd1306_ui_text(18, 45, "SET DOWN", true);
-        ssd1306_ui_text(18, 59, "AUTO CAP", true);
+        ssd1306_ui_text(2, 45, "SET DOWN", true);
+        ssd1306_ui_text(2, 59, "AUTO CAP", true);
     } else if (calibration_collecting) {
-        ssd1306_ui_text(18, 45, "HOLD", true);
-        ssd1306_ui_text(18, 59, "STILL", true);
+        ssd1306_ui_text(2, 45, "HOLD", true);
+        ssd1306_ui_text(2, 59, "STILL", true);
     } else if (calibration_feedback[0]) {
-        ssd1306_ui_text(18, 45, calibration_feedback, true);
-        ssd1306_ui_text(18, 59, "NEW FACE", true);
-        ssd1306_ui_text(18, 112, "MID CAP", true);
+        ssd1306_ui_text(2, 45, calibration_feedback, true);
+        ssd1306_ui_text(2, 59, "NEW FACE", true);
+        ssd1306_ui_text(2, 112, "MID CAP", true);
     } else {
-        ssd1306_ui_text(18, 45, "PLACE", true);
-        ssd1306_ui_text(18, 59, "ANY FACE", true);
-        ssd1306_ui_text(18, 112, "MID CAP", true);
+        ssd1306_ui_text(2, 45, "PLACE", true);
+        ssd1306_ui_text(2, 59, "ANY FACE", true);
+        ssd1306_ui_text(2, 112, "MID CAP", true);
     }
-    ssd1306_ui_text(16, 99, "UP EXIT", true);
+    ssd1306_ui_text(2, 99, "UP EXIT", true);
     ssd1306_show();
 }
 
@@ -1208,7 +1186,7 @@ static void sample_power(void) {
     if (usb_power_present) usb_power_present = measured_mv >= USB_PRESENT_CLEAR_MV;
     else usb_power_present = measured_mv > USB_PRESENT_SET_MV;
     if (oled_ok && (previous_usb_state != usb_power_present ||
-        (ui_state == UI_HOME && !usb_power_present &&
+        (!usb_power_present &&
          previous_tenths != (power_out_millivolts+50u)/100u))) show_ui();
 }
 
@@ -2237,7 +2215,7 @@ int main(void) {
            lsm6dsv_model_name(), lsm6dsv_device_id(), imu_ok ? "OK" : "INIT FAILED");
     if (oled_ok) {
         ui_begin("BOOT", imu_ok ? "I" : "X");
-        ssd1306_ui_text(18, 36, imu_ok ? "IMU OK" : "IMU BAD", true);
+        ssd1306_ui_text(2, 36, imu_ok ? "IMU OK" : "IMU BAD", true);
         ssd1306_show();
     }
 

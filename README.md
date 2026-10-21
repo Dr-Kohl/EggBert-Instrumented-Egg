@@ -199,12 +199,18 @@ bundled with the installed Arduino-Pico core when it is present.
 
 ## Expected behavior
 
-At boot, each LED lights for 300 ms. The OLED then shows the rotated portrait
-**HOME** screen if the IMU answers with `WHO_AM_I = 0x70`. The left yellow rail
-uses yellow-on-black power icons: a vertical battery gauge on battery power or a
-plug when USB power is present. Its one-letter developer marker shows the current
-state (`I`, `A`, `R`, `E`, or `D`). Acceleration values continue to be reported
-over USB serial at 4 Hz in raw counts (0.061 mg/LSB at the live-read scale).
+At boot, each LED lights for 300 ms while a five-note startup tune plays on
+boards with the piezo fitted. The OLED then shows the portrait HOME menu after
+identifying either supported IMU (0x70 or 0x73). All screens use the full 64-pixel
+width, with a common USB/battery and V1/V2 header. On the older two-color panels,
+leftmost pixels are yellow; all-white panels use the same layout. Serial live
+acceleration reporting is unchanged.
+
+The [website tutorial](docs/tutorial/index.html) includes current controls,
+rendered firmware screens, and guides for versions, calibration and Raw XYZ.
+Existing experiment illustrations are retained and identified as showing earlier
+screen arrangements. Use `tools/make_ui_preview.py` to regenerate the 46-state
+framebuffer gallery and text-bounds check; its docstring lists the build steps.
 
 ### On-device capture workflow
 

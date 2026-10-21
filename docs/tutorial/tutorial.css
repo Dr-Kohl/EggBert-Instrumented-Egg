@@ -12,3 +12,12 @@
 .woodcut{margin:1rem 0;background:#fff}
 .woodcut img{display:block;width:100%;height:auto}
 @media(prefers-color-scheme:dark){.tutorial-menu strong{color:#83beed}}
+
+.guide-update,.current-guide{margin:1.2rem 0;padding:1rem;border:1px solid #aebbc6;border-radius:.5rem}
+.guide-update .file-button{margin:0 .5rem .5rem 0}
+.guide-layout{display:grid;grid-template-columns:minmax(0,1fr) 192px;gap:1.5rem;align-items:start}
+.oled-preview{margin:0;text-align:center}.oled-preview img{display:block;max-width:100%;height:auto;margin:auto;background:#000;image-rendering:pixelated}
+.oled-preview figcaption{font-size:.85rem;margin-top:.6rem}
+.illustration-note{font-size:.9rem;color:#59636c}.menu-pages{display:grid;grid-template-columns:1fr 1fr;gap:2rem}
+@media(max-width:640px){.guide-layout,.menu-pages{grid-template-columns:1fr}.oled-preview{max-width:192px;margin:0 auto}}
+@media(prefers-color-scheme:dark){.illustration-note{color:#bcc6ce}}
