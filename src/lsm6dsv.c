@@ -42,6 +42,9 @@ static bool orientation_running;
 static const uint8_t orientation_regs[] = {0x07, 0x08, 0x09, 0x0A, 0x0D, 0x10, 0x11, 0x12, 0x15, 0x17};
 static uint8_t orientation_saved[sizeof orientation_regs];
 static uint8_t saved_emb_enable, saved_emb_fifo, saved_sflp_odr;
+static bool orientation_have_xy;
+static uint8_t orientation_xy_slot;
+static float orientation_x, orientation_y;
 
 static void select_imu(bool selected) { gpio_put(IMU_CS_PIN, !selected); }
 
@@ -266,6 +269,7 @@ bool lsm6dsv_fifo_irq_pending(void) {
 bool lsm6dsv_orientation_start(void) {
     if (detected_model == LSM6DSV_MODEL_UNKNOWN) return false;
     if (orientation_running) return true;
+    orientation_have_xy = false;
     for (size_t i = 0; i < sizeof orientation_regs; ++i)
         orientation_saved[i] = read_reg(orientation_regs[i]);
     orientation_running = true;
@@ -374,6 +378,7 @@ size_t lsm6dsv_dual_fifo_read(lsm6dsv_accel_pair_t *pairs, size_t capacity) {
 }
 
 void lsm6dsv_orientation_stop(void) {
+    orientation_have_xy = false;
     if (!orientation_running) return;
     write_reg(LSM6DSV_FIFO_CTRL4, 0);
     write_reg(0x01u, 0x80u);
@@ -398,7 +403,13 @@ static float fifo_half(uint8_t low, uint8_t high) {
 
 bool lsm6dsv_orientation_read(lsm6dsv_quaternion_t *q, bool *overrun) {
     if (!orientation_running || !q) return false;
-    uint16_t available = fifo_level(overrun);
+    bool overflow = false;
+    uint16_t available = fifo_level(&overflow);
+    if (overflow) {
+        if (overrun) *overrun = true;
+        orientation_have_xy = false;
+        return false;
+    }
     bool found = false;
     // Drain a bounded snapshot and retain the newest rotation, avoiding backlog.
     for (uint16_t i = 0; i < available; ++i) {
@@ -406,8 +417,31 @@ bool lsm6dsv_orientation_read(lsm6dsv_quaternion_t *q, bool *overrun) {
         select_imu(true);
         int transferred = spi_write_read_blocking(IMU_SPI, tx, rx, sizeof tx);
         select_imu(false);
-        if (transferred != sizeof tx) break;
-        if ((rx[1] >> 3) != 0x13u) continue;
+        if (transferred != sizeof tx) { orientation_have_xy = false; break; }
+        if ((rx[1] >> 3) != 0x13u) { orientation_have_xy = false; continue; }
+        if (detected_model == LSM6DSV_MODEL_LSM6DSV320X) {
+            // AN6119 tables 103/104: [0,x,y], then [1,z,w]. V1 instead
+            // supplies [x,y,z] in one record and requires reconstructing w.
+            uint16_t part = (uint16_t)rx[2] | ((uint16_t)rx[3] << 8);
+            uint8_t slot = (rx[1] >> 1) & 3u;
+            if (part == 0) {
+                orientation_x = fifo_half(rx[4],rx[5]);
+                orientation_y = fifo_half(rx[6],rx[7]);
+                orientation_xy_slot = slot;
+                orientation_have_xy = true;
+                continue;
+            }
+            bool paired = part == 1 && orientation_have_xy && slot == orientation_xy_slot;
+            orientation_have_xy = false;
+            if (!paired) continue;
+            float z = fifo_half(rx[4],rx[5]), w = fifo_half(rx[6],rx[7]);
+            float norm = orientation_x*orientation_x + orientation_y*orientation_y + z*z + w*w;
+            if (!isfinite(norm) || norm < .9f || norm > 1.1f) continue;
+            float scale = 1.0f/sqrtf(norm);
+            *q = (lsm6dsv_quaternion_t){w*scale,orientation_x*scale,orientation_y*scale,z*scale};
+            found = true;
+            continue;
+        }
         float x = fifo_half(rx[2], rx[3]), y = fifo_half(rx[4], rx[5]), z = fifo_half(rx[6], rx[7]);
         float norm = x*x + y*y + z*z;
         if (!isfinite(norm) || norm > 1.01f) continue;

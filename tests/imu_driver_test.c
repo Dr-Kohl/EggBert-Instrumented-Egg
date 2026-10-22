@@ -1,5 +1,6 @@
 // Exercise the real driver through a simulated SPI device, without Pico hardware.
 #include <string.h>
+#include <math.h>
 #include "hardware/gpio.h"
 #include "hardware/spi.h"
 #include "lsm6dsv.h"
@@ -89,6 +90,13 @@ static void enqueue(uint8_t tag, uint8_t slot, int16_t x) {
     regs[0][0x1b] = (uint8_t)(queue_size - queue_index);
 }
 
+static void rotation_record(uint8_t slot, uint16_t first, uint16_t second, uint16_t third) {
+    enqueue(0x13,slot,(int16_t)first);
+    uint8_t *r=queue[queue_size-1];
+    r[3]=(uint8_t)second; r[4]=(uint8_t)(second>>8);
+    r[5]=(uint8_t)third; r[6]=(uint8_t)(third>>8);
+}
+
 int imu_driver_test(void) {
     for (unsigned model = 0; model < 2; ++model) {
         device(model ? 0x73 : 0x70);
@@ -132,6 +140,37 @@ int imu_driver_test(void) {
         lsm6dsv_fifo_stop();
         CHECK(lsm6dsv_orientation_start() && bank == 0);
         CHECK(regs[1][4] == 2 && regs[1][0x44] == 2 && regs[1][0x5e] == 0x10);
+        lsm6dsv_quaternion_t q;
+        if (!model) {
+            rotation_record(0,0x3800,0x3800,0x3800); // legacy xyz = .5 each
+            CHECK(lsm6dsv_orientation_read(&q,&overrun));
+            CHECK(fabsf(q.w-.5f)<.0001f && fabsf(q.x-.5f)<.0001f && fabsf(q.z-.5f)<.0001f);
+        } else {
+            rotation_record(0,1,0,0x3c00); // orphan ZW cannot produce a quaternion
+            CHECK(!lsm6dsv_orientation_read(&q,&overrun));
+            rotation_record(1,0,0x3800,0x3800);
+            CHECK(!lsm6dsv_orientation_read(&q,&overrun)); // XY split across calls
+            rotation_record(1,1,0x3800,0xb800); // z=.5, w=-.5: preserve w's sign
+            CHECK(lsm6dsv_orientation_read(&q,&overrun));
+            CHECK(fabsf(q.w+.5f)<.0001f && fabsf(q.x-.5f)<.0001f && fabsf(q.y-.5f)<.0001f && fabsf(q.z-.5f)<.0001f);
+            rotation_record(2,0,0,0); rotation_record(3,1,0,0x3c00);
+            CHECK(!lsm6dsv_orientation_read(&q,&overrun)); // mismatched time slots
+            rotation_record(3,0,0x7e00,0); rotation_record(3,1,0,0x3c00);
+            CHECK(!lsm6dsv_orientation_read(&q,&overrun)); // NaN
+            rotation_record(0,0,0x3c00,0x3c00); rotation_record(0,1,0x3c00,0x3c00);
+            CHECK(!lsm6dsv_orientation_read(&q,&overrun)); // invalid norm
+            rotation_record(1,0,0,0); enqueue(2,1,0); rotation_record(1,1,0,0x3c00);
+            CHECK(!lsm6dsv_orientation_read(&q,&overrun)); // interruption invalidates pending XY
+            rotation_record(2,0,0,0);
+            CHECK(!lsm6dsv_orientation_read(&q,&overrun));
+            regs[0][0x1c]=0x40;
+            CHECK(!lsm6dsv_orientation_read(&q,&overrun) && overrun);
+            regs[0][0x1c]=0;
+            rotation_record(2,1,0,0x3c00);
+            CHECK(!lsm6dsv_orientation_read(&q,&overrun));
+            rotation_record(3,0,0,0); rotation_record(3,1,0,0x3c00);
+            CHECK(lsm6dsv_orientation_read(&q,&overrun) && q.w==1 && q.x==0);
+        }
         lsm6dsv_orientation_stop();
         CHECK(bank == 0 && regs[0][0x10] == 6 && regs[0][0x17] == 0);
         CHECK(regs[0][0x4e] == 0 && !(regs[0][0x0b] & 8));

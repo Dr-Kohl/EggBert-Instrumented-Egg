@@ -1992,8 +1992,10 @@ static void handle_serial_command(void) {
                 stop_orientation();
                 download_capture();
             } else if (strcmp(command, "orientation fused") == 0) {
-                if (capture_active || ui_state != UI_HOME) {
-                    printf("ERROR: return EggBert to HOME before orientation.\n");
+                bool orientation_screen = ui_state == UI_HOME || ui_state == UI_CAPTURE_COMPLETE ||
+                    (ui_state == UI_BEAM && beam_state == BEAM_RESULT);
+                if (capture_active || !orientation_screen) {
+                    printf("ERROR: return EggBert to HOME or a completed recording before orientation.\n");
                 } else {
                     stop_orientation();
                     orientation_fused = lsm6dsv_orientation_start();
