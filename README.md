@@ -1,5 +1,9 @@
 # EggBert RP2354A board bring-up
 
+New to the code? Start with the [student code guide](STUDENT_GUIDE.md) for the
+project map, measurement units, recording walkthrough, and suggested exercises.
+The guide describes existing behavior; it does not add new measurement features.
+
 HOME 2 is ordered BEAM, CALIBRATE, RAW XYZ. In calibration, the top button
 (UP EXIT) cancels at any stage before saving and keeps the previous calibration.
 After six faces the candidate stays in RAM; press MID SAVE to deliberately

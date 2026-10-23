@@ -1,3 +1,6 @@
+// Hardware driver: register configuration, fresh reads, and FIFO decoding.
+// Raw counts leave this layer without user calibration. A register value is
+// meaningful only with the detected model, selected range, and operating mode.
 #include "lsm6dsv.h"
 
 #include "board.h"
@@ -74,10 +77,13 @@ const char *lsm6dsv_model_name(void) {
     }
 }
 
+// Interrupt work stays short: signal the main loop, which performs the SPI reads.
 static void imu_irq_callback(uint gpio, uint32_t events) {
     if (gpio == IMU_INT1_PIN && (events & GPIO_IRQ_EDGE_RISE)) fifo_irq_pending = true;
 }
 
+// The count is FIFO records, not necessarily complete XYZ pairs/quaternions.
+// Overrun is latched into the caller's flag; this function never clears it.
 static uint16_t fifo_level(bool *overrun) {
     uint8_t low = read_reg(LSM6DSV_FIFO_STATUS1);
     uint8_t high_and_flags = read_reg(LSM6DSV_FIFO_STATUS2);
@@ -105,6 +111,8 @@ static bool read_fifo_sample(lsm6dsv_accel_sample_t *sample) {
     return true;
 }
 
+// WHO_AM_I chooses the supported hardware at boot; unknown devices must not be
+// driven using an assumed-compatible register map just because SPI responds.
 bool lsm6dsv_init(void) {
     dual_running = false;
     detected_model = LSM6DSV_MODEL_UNKNOWN;
@@ -266,6 +274,8 @@ bool lsm6dsv_fifo_irq_pending(void) {
 // lsm6dsv320x-pid drivers; high-g is not involved in orientation.
 // Embedded function registers require FUNC_CFG_ACCESS bit 7; always return
 // to the main bank before servicing any other IMU operation.
+// Save registers before borrowing the IMU for SFLP (sensor fusion low power).
+// Stop restores them so live labs can resume their own ranges and sample rates.
 bool lsm6dsv_orientation_start(void) {
     if (detected_model == LSM6DSV_MODEL_UNKNOWN) return false;
     if (orientation_running) return true;
@@ -328,6 +338,9 @@ bool lsm6dsv_drop_fifo_start(void) {
     return true;
 }
 
+// Assemble low/high records by their modulo-four time-slot tags. Pending data
+// survives across calls when a FIFO batch ends halfway through a pair. Matching
+// digital slots does not establish identical analog/filter delay in both sensors.
 size_t lsm6dsv_dual_fifo_read(lsm6dsv_accel_pair_t *pairs, size_t capacity) {
     if (!dual_running || !pairs || !capacity) return 0;
     fifo_irq_pending = false;
@@ -401,6 +414,9 @@ static float fifo_half(uint8_t low, uint8_t high) {
     return bits & 0x8000u ? -value : value;
 }
 
+// V1 supplies one XYZ record; V2 supplies separate XY and ZW records. Assemble
+// V2 before normalization and retain transmitted w's sign. Treating a half-pair
+// as a V1 quaternion can create plausible-looking but incorrect orientation.
 bool lsm6dsv_orientation_read(lsm6dsv_quaternion_t *q, bool *overrun) {
     if (!orientation_running || !q) return false;
     bool overflow = false;

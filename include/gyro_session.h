@@ -14,6 +14,9 @@
 #define GYRO_LIMIT_COUNTS 28500 // near the nominal +/-2000 deg/s range
 
 typedef enum { GYRO_SETTLING, GYRO_ZEROING, GYRO_RESET_WAIT, GYRO_RUNNING } gyro_phase_t;
+// All *_mdps fields are millidegrees/second, not accumulated angle. Stationary
+// zeroing estimates bias; movement restarts that estimate instead of becoming
+// part of the zero. Per-axis peaks retain their sign for the displayed trial.
 typedef struct {
     gyro_phase_t phase;
     uint32_t phase_started_ms;

@@ -6,6 +6,9 @@
 // Autocorrelation estimate over 0.3--20 Hz. Input is averaged to 60 Hz;
 // remove the DC offset and linear drift before comparing repeated cycles.
 // Return zero when no convincing periodic signal is present.
+// This function modifies its input scratch signal while detrending it. The
+// caller must not pass the protected capture buffer itself. The 60 Hz return
+// calculation assumes the caller has already averaged 480 Hz samples by eight.
 static inline float beam_frequency(float *signal, size_t count) {
     if (count < 240u) return 0;
     float mean = 0, slope_sum = 0, slope_den = 0;

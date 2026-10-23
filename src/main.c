@@ -1,3 +1,6 @@
+// Application coordinator: buttons select activities, sensor services advance
+// their state machines, and show_* functions draw the current state. Read
+// STUDENT_GUIDE.md before following the recording path through this file.
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -26,6 +29,8 @@ static const uint LEDS[] = {LED_GREEN_PIN, LED_YELLOW_PIN, LED_RED_PIN};
 // runs bottom-to-top, so it is deliberately not the navigation order.
 static const uint BUTTONS[] = {BUTTON_3_PIN, BUTTON_2_PIN, BUTTON_1_PIN};
 
+// Sample counts define time in a recording; USB arrival time does not.
+// These rates are nominal sensor settings, not a calibrated time reference.
 #define CAPTURE_RATE_HZ       3840u
 #define CAPTURE_SECONDS         5u
 #define CAPTURE_MAX_SAMPLES   (CAPTURE_RATE_HZ * CAPTURE_SECONDS)
@@ -40,6 +45,9 @@ static const uint BUTTONS[] = {BUTTON_3_PIN, BUTTON_2_PIN, BUTTON_1_PIN};
 #define STILL_MAX_COUNTS       (ACCEL_COUNTS_PER_G * 12u / 10u)
 #define FREEFALL_MAX_COUNTS    (ACCEL_COUNTS_PER_G * 45u / 100u)
 #define STILL_REQUIRED_SAMPLES CAPTURE_RATE_HZ
+// Gentle Catch detects freefall with vector magnitude, but scores the largest
+// absolute individual axis during a fixed 150 ms window. It does not integrate
+// acceleration or estimate collision energy, and a longer catch can outlast it.
 #define GENTLE_CATCH_START_COUNTS (ACCEL_COUNTS_PER_G * 8u / 10u)
 #define GENTLE_CATCH_SAMPLES      (CAPTURE_RATE_HZ * 15u / 100u)
 #define GENTLE_REARM_STILL_SAMPLES (CAPTURE_RATE_HZ / 2u)
@@ -89,7 +97,9 @@ static const uint BUTTONS[] = {BUTTON_3_PIN, BUTTON_2_PIN, BUTTON_1_PIN};
 #define PENDULUM_PERIODS_TO_AVERAGE 4u
 
 // 19,200 samples x 3 axes x 16 bits = 115,200 bytes.  This is intentionally
-// RAM-only for the first capture bring-up; no flash writes occur.
+// RAM-only: recording does not write flash. The second equal-sized array holds
+// v2 high-g readings at the SAME ring indices: together they use 230,400 bytes.
+// Calibration, unlike recordings, is saved separately in reserved flash sectors.
 static lsm6dsv_accel_sample_t capture_samples[CAPTURE_MAX_SAMPLES];
 static lsm6dsv_accel_sample_t capture_high_samples[CAPTURE_MAX_SAMPLES];
 static lsm6dsv_accel_pair_t fifo_pairs[32];
@@ -286,6 +296,8 @@ static bool calibration_record_valid(const calibration_record_t *record) {
     return true;
 }
 
+// A/B flash records let startup choose the newest valid calibration. CRC and
+// scale bounds reject damaged records; absence of a valid record means raw data.
 static void calibration_load(void) {
     const calibration_record_t *first = (const calibration_record_t *)(XIP_BASE + CALIBRATION_FLASH_A);
     const calibration_record_t *second = (const calibration_record_t *)(XIP_BASE + CALIBRATION_FLASH_B);
@@ -308,6 +320,8 @@ static void calibration_apply_capture_sample(lsm6dsv_accel_sample_t *sample) {
     sample->z = calibration_correct_axis(sample->z, 2u, capture_scale);
 }
 
+// Called only by explicit wizard SAVE. Alternate flash sectors so the previous
+// valid record survives an interrupted erase/program of the new candidate.
 static bool calibration_save(const calibration_record_t *candidate) {
     calibration_record_t record = *candidate;
     record.magic = CALIBRATION_MAGIC;
@@ -1126,6 +1140,7 @@ static void calibration_commit_pending(void) {
     } else strcpy(calibration_feedback, "SAVE FAIL");
 }
 
+// Cancel the RAM candidate without installing it or changing a saved recording.
 static void calibration_exit(void) {
     bool saved = calibration_complete;
     calibration_reset_wizard();
@@ -1234,6 +1249,7 @@ static size_t capture_first_index(void) {
     return capture_oldest_index;
 }
 
+// Consumers see oldest-to-newest samples even when the physical ring has wrapped.
 static const lsm6dsv_accel_sample_t *capture_sample_at(size_t chronological_index) {
     size_t physical_index = (capture_first_index() + chronological_index) % CAPTURE_MAX_SAMPLES;
     return &capture_samples[physical_index];
@@ -1365,6 +1381,9 @@ static void download_dual_raw(void) {
     stdio_flush();
 }
 
+// EGG2 exports raw low/high pairs and the calibration frozen at capture start.
+// Selection for a graph happens later; neither raw stream is replaced by it.
+// Emit bytes explicitly so the wire format does not depend on C struct padding.
 static void download_dual_capture(void) {
     if (!capture_count || capture_active) {
         printf("ERROR: no completed paired samples available.\n"); return;
@@ -1418,6 +1437,9 @@ static bool verify_capture_range(void) {
     return true;
 }
 
+// Snapshot calibration and configure acquisition before arming. A completed
+// recording blocks rearming until explicit erase; capture protection is separate
+// from which menu is currently visible.
 static void start_capture(void) {
     if (capture_complete) {
         printf("Capture is protected. Erase it from the EggBert menu before rearming.\n");
@@ -1675,6 +1697,8 @@ static void update_status_leds(bool imu_ok) {
     }
 }
 
+// Compare squared magnitudes with squared thresholds to avoid a square root in
+// trigger checks. Widen BEFORE multiplying so three full-range int16 axes fit.
 static uint64_t magnitude_squared(const lsm6dsv_accel_sample_t *sample) {
     int64_t x = sample->x;
     int64_t y = sample->y;
@@ -1688,6 +1712,8 @@ static bool magnitude_between(uint64_t magnitude, uint32_t minimum, uint32_t max
     return magnitude >= minimum_squared && magnitude <= maximum_squared;
 }
 
+// Trigger decisions receive calibrated low-g samples. V2 storage deliberately
+// uses the original pair instead, preserving data for later recalibration/viewing.
 static void store_capture_sample(const lsm6dsv_accel_sample_t *sample) {
     capture_samples[capture_write_index] = capture_has_highg ? capture_raw_pair.low : *sample;
     if (capture_has_highg) capture_high_samples[capture_write_index] = capture_raw_pair.high;
@@ -1696,6 +1722,8 @@ static void store_capture_sample(const lsm6dsv_accel_sample_t *sample) {
     else capture_oldest_index = (capture_oldest_index + 1u) % CAPTURE_MAX_SAMPLES;
 }
 
+// At the event, keep only the desired history and the trigger sample; older
+// waiting-time samples can be discarded without moving the arrays in RAM.
 static void retain_pretrigger_window(void) {
     // Keep exactly the rolling half-second before the trigger plus its sample.
     // This discards the menu/arming delay without copying the large RAM buffer.
@@ -1865,6 +1893,8 @@ static void capture_sensor_failure(const char *reason, bool overrun) {
     }
 }
 
+// Drain FIFO batches in the main loop, not the interrupt handler. A dual-stream
+// continuity fault stops acquisition rather than inventing missing sample pairs.
 static void service_capture(void) {
     if (!capture_active) return;
     if (lsm6dsv_dual_fifo_active() &&
@@ -1937,6 +1967,9 @@ static void stop_orientation(void) {
     lsm6dsv_orientation_stop();
 }
 
+// Orientation temporarily owns the IMU configuration; it is separate from the
+// acceleration recording. Q2 sends w,x,y,z scaled by 1,000,000 plus live sensor
+// counts. The browser reorders the quaternion to its internal x,y,z,w convention.
 static void service_orientation(void) {
     if (!orientation_fused) return;
     if (!stdio_usb_connected()) { stop_orientation(); return; }
@@ -2197,6 +2230,9 @@ static void handle_button_press(unsigned button) {
     if (!capture_active) show_ui();
 }
 
+// Cooperative scheduler: regularly service USB, acquisition and buttons. Avoid
+// adding long delays here: hardware sampling continues while software is busy,
+// and the finite FIFO can overflow. Sound progresses through timer alarms.
 int main(void) {
     stdio_init_all();
     setup_gpio();

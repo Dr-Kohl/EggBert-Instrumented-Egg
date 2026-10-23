@@ -4,6 +4,9 @@
 
 // Switch the entire XYZ vector together. Raw low-g also guards against a
 // calibration correction masking the approach to the hardware range limit.
+// Low arguments are magnitudes in 2048 counts/g; high_peak_counts is native
+// high-g counts at 10417 micro-g/count. Separate 12 g entry and 8 g exit limits
+// provide hysteresis: readings near one threshold cannot chatter between sources.
 static inline bool accel_select_high(bool previous, uint32_t low_peak_counts,
                                      uint32_t raw_low_peak_counts, uint32_t high_peak_counts) {
     if (!previous) return low_peak_counts >= 12u*2048u || raw_low_peak_counts >= 12u*2048u;

@@ -9,6 +9,9 @@
 #define EGG_FLAG_INVALID 0x20u
 #define EGG_FLAG_HIGH_CLIPPED 0x40u
 
+// Header calibration offsets use +/-2 g live counts (16384 counts/g), even
+// though the recording uses +/-16 g low counts (2048 counts/g). Q16 scales
+// represent gain as an integer divided by 65536; 65536 means unity gain.
 typedef struct {
     uint8_t flags;
     uint32_t rate, count, trigger, post, payload_crc, calibration_generation;
@@ -37,6 +40,9 @@ static inline int16_t egg_correct_low(int16_t raw, int32_t offset_live, uint32_t
     if (corrected<INT16_MIN) return INT16_MIN;
     return (int16_t)corrected;
 }
+// Serialize little-endian fields and a header CRC independently of host ABI.
+// The payload has its own CRC; corruption detection is not sensor calibration
+// and does not establish physical accuracy. See EGG_FORMAT.md for every offset.
 static inline void egg2_header(uint8_t out[EGG2_HEADER_BYTES], const egg2_metadata_t *m) {
     memset(out,0,EGG2_HEADER_BYTES);
     memcpy(out,"EGG2",4); out[4]=2; out[5]=m->flags;

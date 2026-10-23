@@ -1,3 +1,6 @@
+// Browser side of the data path: validate .egg bytes, recover physical units,
+// select a display stream, then plot/export. Opening a local recording does not
+// require a USB connection. See ../STUDENT_GUIDE.md for the firmware counterpart.
 "use strict";
 
 const HEADER_BYTES = 32, MAGIC = [0x45, 0x47, 0x47];
@@ -38,6 +41,9 @@ function correctLowCount(raw, offsetLive, scaleQ16, countsPerG, liveCountsPerG) 
   return clamp(Math.floor(((raw-offset)*scaleQ16+32768)/65536),-32768,32767);
 }
 // Hysteresis uses per-axis limits, not vector magnitude. All axes share a source.
+// Mirrors firmware hysteresis. Selection is for display/analysis only: raw
+// arrays remain available. Both sensors must be below the exit limit to avoid
+// returning to a clipped or still-settling low-g reading too soon.
 function automaticStream(low, high, rawLow, count) {
   const stream={x:new Float32Array(count),y:new Float32Array(count),z:new Float32Array(count),magnitude:new Float32Array(count),fullScaleG:320,clipped:new Uint8Array(count),source:new Uint8Array(count)};
   let useHigh=false;
@@ -53,6 +59,9 @@ function automaticStream(low, high, rawLow, count) {
   }
   return stream;
 }
+// EGG1 contains calibrated single-sensor data; EGG2 retains raw paired data and
+// its calibration snapshot. Header validity and payload CRC are distinct checks.
+// Consumers derive time from sample indices and the nominal recorded rate.
 function parseEgg(bytes) {
   const {view,version,flags,headerBytes,sampleRate,sampleCount,triggerOffset,postSamples,countsPerG,sampleBytes,expectedCrc,dual}=captureLayout(bytes);
   const totalBytes = headerBytes + sampleCount * sampleBytes;
@@ -90,6 +99,9 @@ function parseEgg(bytes) {
           fullScaleG:auto.fullScaleG,x:auto.x,y:auto.y,z:auto.z,magnitude:auto.magnitude,validCrc:crc32(bytes.subarray(headerBytes))===expectedCrc};
 }
 
+// A detected freefall interval supports the height estimate only if launch and
+// catch have approximately equal height and motion is ballistic. This is not a
+// general trajectory reconstruction or a measure of collision energy.
 function detectFlight() {
   if (!capture) return undefined;
   if (capture.flags & (FLAG_BEAM|FLAG_FIFO_OVERRUN|FLAG_INVALID) || !capture.validCrc) return undefined;
@@ -282,6 +294,8 @@ function drawPlot(canvas, series, domain, colors, unit, events) {
 
 // Retain extrema and endpoints in chronological order in every display bucket.
 // At close zoom the bucket size is one, so every original sample is drawn.
+// Keep visual spikes when many samples share a screen pixel. Plot reduction
+// must not be mistaken for a reduction of the stored data or CSV resolution.
 function peakPreservingIndices(values, start, end, plotWidth) {
   const stride = Math.max(1, Math.ceil((end - start + 1) / plotWidth)), indices = [];
   for (let first = start; first <= end; first += stride) {

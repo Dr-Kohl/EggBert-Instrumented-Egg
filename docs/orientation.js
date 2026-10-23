@@ -1,4 +1,8 @@
-/* Quaternion order throughout this module is [x, y, z, w]. */
+/* Quaternion order throughout this module is [x, y, z, w].
+ * Firmware serial Q1/Q2 uses w,x,y,z; parse() performs the conversion. Unit
+ * quaternions describe rotation, not position. Without a magnetometer, heading
+ * is relative and may drift; recentering changes heading rather than tilt.
+ */
 (function (root) {
   "use strict";
   function normalize(q) {

@@ -10,6 +10,9 @@
 #define OLED_PAGES 8u
 #define UI_WIDTH 64u
 #define UI_HEIGHT 128u
+// Controller memory is 128 columns by 8 pages (8 vertical bits per byte).
+// The egg presents a rotated 64-by-128 logical screen; ui_pixel_unchecked maps
+// between the two coordinate systems. Drawing changes RAM until show sends it.
 static uint8_t framebuffer[OLED_WIDTH * OLED_PAGES];
 
 static bool command(uint8_t value) {

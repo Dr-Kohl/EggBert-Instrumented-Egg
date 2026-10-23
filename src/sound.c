@@ -1,3 +1,6 @@
+// A passive piezo needs an oscillating signal, generated here by hardware PWM.
+// Timer alarms advance short note sequences without sleeping in the main loop;
+// blocking for a tune could prevent timely servicing of the recording FIFO.
 #include "sound.h"
 #include "board.h"
 #include "hardware/clocks.h"
