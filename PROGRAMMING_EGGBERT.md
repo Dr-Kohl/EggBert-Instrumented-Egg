@@ -4,9 +4,12 @@ Use this procedure for every JLCPCB Instrumented Egg / EggBert board. It is inte
 
 ## Authoritative source and firmware
 
-- Shared version 1/version 2 bring-up checkout (October 20, 2026): `C:\Users\Kohlc\Documents\Codex\ADLD\EggBert`.
-- This checkout started from public `master` commit `33171c2` and contains the
-  shared-IMU bring-up changes. Build and flash from this checkout for that work.
+- Hammer Hit development checkout (November 4, 2026):
+  `C:\Users\Kohlc\Documents\Codex\ADLD\EggBert-Instrumented-Egg`.
+- Branch `codex/hammer-hit` starts from public `master` / `calebeh-revision`
+  commit `fad9fb5` and includes the shared version 1/version 2 firmware.
+  Build and flash from this checkout for Hammer Hit work. Firmware `status`
+  identifies this build as `hammer-hit-3`.
 - The earlier checkout at `C:\Users\Kohlc\OneDrive - Cedarville University\Documents\ChatGPT\EggBert Instrumented Egg`
   has unfinished local changes; preserve them. Confirm the checkout and changes
   with `git log -1` and `git status` before building or programming.

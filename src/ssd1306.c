@@ -135,18 +135,29 @@ void ssd1306_ui_text_scaled(uint8_t x, uint8_t y, const char *text, bool on, uin
 void ssd1306_text(uint8_t row, const char *text) {
     if (row >= OLED_PAGES) return;
     uint8_t col = 0;
-    while (*text && col + 5 < OLED_WIDTH) {
+    while (*text && col + 5u < OLED_WIDTH) {
         const uint8_t *glyph = glyphs[glyph_index(*text++)];
         for (unsigned i = 0; i < 5; ++i) framebuffer[row * OLED_WIDTH + col++] = glyph[i];
         framebuffer[row * OLED_WIDTH + col++] = 0;
     }
 }
 
-void ssd1306_show(void) {
-    for (uint8_t page = 0; page < OLED_PAGES; ++page) {
+static uint8_t pending_page = OLED_PAGES;
+
+static void show_page(uint8_t page) {
         command(0xB0 | page); command(0x00); command(0x10);
         uint8_t packet[OLED_WIDTH + 1] = {0x40};
         memcpy(&packet[1], &framebuffer[page * OLED_WIDTH], OLED_WIDTH);
         i2c_write_blocking(OLED_I2C, OLED_I2C_ADDRESS, packet, sizeof packet, false);
-    }
+}
+
+void ssd1306_schedule_show(void) { pending_page=0; }
+
+void ssd1306_service_show(void) {
+    if (pending_page<OLED_PAGES) show_page(pending_page++);
+}
+
+void ssd1306_show(void) {
+    pending_page=OLED_PAGES;
+    for (uint8_t page = 0; page < OLED_PAGES; ++page) show_page(page);
 }

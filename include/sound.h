@@ -2,10 +2,14 @@
 
 typedef enum {
     SOUND_BUTTON,
+    SOUND_TICK,
     SOUND_READY,
     SOUND_RECORDING,
     SOUND_COMPLETE,
     SOUND_STARTUP,
+    SOUND_TOSS,
+    SOUND_HAMMER_ARMED,
+    SOUND_TIMEOUT,
     SOUND_ERROR,
 } sound_cue_t;
 

@@ -1,5 +1,66 @@
 # EggBert RP2354A board bring-up
 
+## Hammer Hit (November 4, 2026)
+
+Continuing on another PC? See [the home-PC handoff](HAMMER_HIT_HANDOFF.md)
+for the branch, build setup, verification and remaining physical checks.
+
+HOME 2 > HAMMER HIT > MID BEGIN starts the gesture listener before wrapping.
+Wait briefly while holding still, then toss gently, catch, and pause at least
+half a second. Repeat three times, listening for one confirmation chirp after
+each settled catch. After the third chirp hold still for two more seconds.
+A rising melody with a repeated high note means ARMED; green stays on and a
+short tick sounds once per second. Yellow blinks while waiting for gestures.
+
+Build H2 accepts a modest >1.2 g push sustained for 12 ms, followed within
+350 ms by 150–900 ms of flight below 0.45 g (900 ms is the elapsed ceiling).
+Brief interruptions up to 10 ms individually / 20 ms total are tolerated.
+Five milliseconds of support marks the catch; a soft catch need not exceed
+1.5 g. It must then settle for half a second. Three accepted tosses must
+finish within 15 seconds of the first accepted catch. A broken sequence
+resets with an error sound. There is no acceleration-only guarantee against
+every possible shake: validate these starting thresholds with the actual foam.
+The stable interval compares the vector with a fixed reference (0.20 g
+tolerance), not just 1 g magnitude, so rapidly changing orientation cannot
+satisfy the pause. The display shows HOLD STILL / TOSS NOW / IN AIR /
+CATCH WAIT, the measured flight milliseconds, and a rejection reason.
+
+Once armed, an impact (>1.5 g) followed within 150 ms by at least 200 ms below
+0.45 g confirms a launch. Up to 5 ms per interruption and 10 ms total are
+allowed; the detector still requires 200 ms of actual near-weightlessness.
+Bumps without confirmed flight are ignored. Two minutes without confirmation
+plays a descending timeout cue and requires the three tosses again. The middle
+button cancels before confirmation; buttons cannot interrupt a confirmed event.
+
+The existing 19,200-sample circular buffer retains 0.5 seconds before the launch
+candidate plus 4.5 seconds including/after it, at 3840 Hz. Delayed confirmation
+does not shift the window or lose the strike. The two-minute waiting period
+does not allocate more storage. V2 retains both XYZ streams (230,400 bytes);
+V1 uses low-g only. Existing EGG2/EGG1 downloads and recording protection work
+unchanged. Recording is RAM-only: download before power-off or reflashing.
+
+Build H3 prioritizes the recording: the completion screen shows RECORDING
+COMPLETE, a single MAX vector-magnitude estimate in g over the entire recording,
+USB DL and MID OPT. There is no 16 g judgment or HIT/END classification. On V2, automatic
+low/high selection uses the existing 12 g/8 g axis hysteresis and frozen low-g
+calibration. On V1, raw low-g clipping displays CLIPPED and sets the EGG1 clipped
+flag; the displayed maximum may underestimate the actual peak. FIFO/integrity
+faults display DATA ERROR / CHECK DATA, or NO DATA if no samples were obtained.
+Available samples remain protected and downloadable after errors or clipping.
+Peak values are sampled estimates, not a calibrated impact
+certification, and rotation or a sensor away from the rotation center can
+prevent flight recognition.
+
+USB bench commands `hammer` (idle HOME, no saved recording) and `hammer cancel`
+enter/cancel the same gesture workflow; neither bypasses arming. `status`
+identifies firmware `hammer-hit-3` and reports phase, toss count and maximum.
+ARM tests: `tests/hammer_trigger_test.c` exercises gesture rejection, flight
+qualification and timeout; `tools/make_hammer_capture_test.py` extracts the
+actual buffer/score functions to verify both board versions and wrapped rings.
+
+Build/program from this checkout using `PROGRAMMING_EGGBERT.md`. The artifact is
+`build/eggbert_bringup.elf`. Physical foam/toss/hammer trials remain necessary.
+
 New to the code? Start with the [student code guide](STUDENT_GUIDE.md) for the
 project map, measurement units, recording walkthrough, and suggested exercises.
 The guide describes existing behavior; it does not add new measurement features.

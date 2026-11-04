@@ -14,3 +14,7 @@ void ssd1306_ui_text(uint8_t x, uint8_t y, const char *text, bool on);
 void ssd1306_ui_text_double_height(uint8_t x, uint8_t y, const char *text, bool on);
 void ssd1306_ui_text_scaled(uint8_t x, uint8_t y, const char *text, bool on, uint8_t scale);
 void ssd1306_show(void);
+// Capture screens send one page per scheduler turn, allowing FIFO service
+// between I2C transfers. Drawing updates the RAM framebuffer as usual.
+void ssd1306_schedule_show(void);
+void ssd1306_service_show(void);
