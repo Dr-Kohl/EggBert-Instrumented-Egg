@@ -80,6 +80,13 @@ void sound_stop(void) {
     restore_interrupts(irq);
 }
 
+void sound_set_enabled(bool enabled) {
+    uint32_t irq=save_and_disable_interrupts();
+    sound_enabled=enabled;
+    if (!enabled) sound_stop();
+    restore_interrupts(irq);
+}
+
 void sound_play(sound_cue_t cue) {
     if (!sound_enabled) { sound_stop(); return; }
     if (!initialized || (unsigned)cue > SOUND_ERROR) return;

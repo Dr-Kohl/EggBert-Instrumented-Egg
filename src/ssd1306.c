@@ -38,6 +38,10 @@ bool ssd1306_init(void) {
     return true;
 }
 
+bool ssd1306_set_contrast(uint8_t contrast) {
+    return command(0x81) && command(contrast);
+}
+
 void ssd1306_clear(void) { memset(framebuffer, 0, sizeof framebuffer); }
 
 // Compact 5x7 diagnostics glyphs: only characters needed by the bring-up screen.
@@ -135,7 +139,7 @@ void ssd1306_ui_text_scaled(uint8_t x, uint8_t y, const char *text, bool on, uin
 void ssd1306_text(uint8_t row, const char *text) {
     if (row >= OLED_PAGES) return;
     uint8_t col = 0;
-    while (*text && col + 5 < OLED_WIDTH) {
+    while (*text && col + 5u < OLED_WIDTH) {
         const uint8_t *glyph = glyphs[glyph_index(*text++)];
         for (unsigned i = 0; i < 5; ++i) framebuffer[row * OLED_WIDTH + col++] = glyph[i];
         framebuffer[row * OLED_WIDTH + col++] = 0;

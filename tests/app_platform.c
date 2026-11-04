@@ -3,6 +3,7 @@
 #include "egg_format.h"
 #include "sound.h"
 #include "hardware/i2c.h"
+#include "hardware/sync.h"
 
 uint32_t test_now;
 int test_time_mode=-1;
@@ -16,6 +17,12 @@ unsigned test_text_overflows;
 lsm6dsv_model_t test_model=LSM6DSV_MODEL_LSM6DSV320X;
 static unsigned page;
 static bool fifo_dual;
+uint8_t test_flash[PICO_FLASH_SIZE_BYTES];
+unsigned test_flash_erases, test_flash_programs, test_irq_depth, test_sound_stops;
+size_t test_flash_program_limit=FLASH_PAGE_SIZE;
+bool test_screen_ok=true, sound_enabled=true;
+uint8_t test_contrast=0x7f;
+static bool expect_contrast;
 static i2c_inst_t i2c_instance;
 i2c_inst_t *i2c0=&i2c_instance;
 absolute_time_t get_absolute_time(void) { return test_now; }
@@ -29,6 +36,11 @@ void gpio_pull_up(uint pin) { (void)pin; }
 unsigned i2c_init(i2c_inst_t *i2c,unsigned baud) { (void)i2c; return baud; }
 int i2c_write_blocking(i2c_inst_t *i2c,uint8_t address,const uint8_t *data,size_t size,bool nostop) {
     (void)i2c; (void)address; (void)nostop;
+    if (!test_screen_ok) return -1;
+    if (size==2 && data[0]==0) {
+        if (expect_contrast) { test_contrast=data[1]; expect_contrast=false; }
+        else if (data[1]==0x81) expect_contrast=true;
+    }
     if (size==2 && data[0]==0 && (data[1]&0xf8)==0xb0) page=data[1]&7;
     if (size==129 && data[0]==0x40) {
         memcpy(test_frame+page*128,data+1,128);
@@ -40,6 +52,19 @@ int i2c_write_blocking(i2c_inst_t *i2c,uint8_t address,const uint8_t *data,size_
     return (int)size;
 }
 void sound_play(sound_cue_t cue) { (void)cue; }
+void sound_stop(void) { ++test_sound_stops; }
+void sound_set_enabled(bool enabled) { sound_enabled=enabled; if (!enabled) sound_stop(); }
+uint32_t save_and_disable_interrupts(void) { return test_irq_depth++; }
+void restore_interrupts(uint32_t state) { test_irq_depth=state; }
+void flash_range_erase(uint32_t offset,size_t count) {
+    ++test_flash_erases;
+    memset(test_flash+offset,0xff,count);
+}
+void flash_range_program(uint32_t offset,const uint8_t *data,size_t count) {
+    ++test_flash_programs;
+    if (count>test_flash_program_limit) count=test_flash_program_limit;
+    for (size_t i=0;i<count;++i) test_flash[offset+i]&=data[i];
+}
 lsm6dsv_model_t lsm6dsv_model(void) { return test_model; }
 bool lsm6dsv_read_accel(int16_t *x,int16_t *y,int16_t *z) {
     *x=test_accel[0]; *y=test_accel[1]; *z=test_accel[2]; return test_sensor_ok;

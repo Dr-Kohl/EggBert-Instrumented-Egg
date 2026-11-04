@@ -7,6 +7,48 @@ static void open_app(const char *id) {
     assert(app_current()==app_entries[test_app_index(id)].app);
 }
 
+static void test_settings_controls(void) {
+    memset(test_flash,0xff,sizeof test_flash);
+    memset(test_flash+PICO_FLASH_SIZE_BYTES-2u*FLASH_SECTOR_SIZE,0xa5,2u*FLASH_SECTOR_SIZE);
+    sound_enabled=true;
+    settings_init();
+    capture_complete=true; capture_count=7200;
+    capture_metadata.calibration_generation=29;
+    memset(capture_samples,0x35,sizeof capture_samples);
+    open_app("settings");
+    assert(settings_selection==0 && settings_current()->sound);
+    unsigned stopped=test_sound_stops, writes=test_flash_programs;
+    handle_button_press(1); // Sound off, including an already active tone.
+    assert(!sound_enabled && !settings_current()->sound && test_sound_stops>stopped);
+    handle_button_press(2); handle_button_press(1); // Normal -> high.
+    assert(settings_current()->light==SETTINGS_LIGHT_HIGH && test_contrast==0xff);
+    handle_button_press(1); // High -> low.
+    assert(settings_current()->light==SETTINGS_LIGHT_LOW && test_contrast==0x10);
+    assert(test_flash_programs==writes); // Previewing does not write flash.
+    handle_button_press(2); // SAVE EXIT.
+    test_flash_program_limit=8; handle_button_press(1);
+    assert(app_current()==&settings_app && !strcmp(settings_feedback,"SAVE ERROR"));
+    test_flash_program_limit=FLASH_PAGE_SIZE; handle_button_press(1);
+    assert(!app_current() && home_menu.selected==test_app_index("settings"));
+    assert(capture_complete && capture_count==7200 && capture_metadata.calibration_generation==29);
+    for(size_t i=0;i<sizeof capture_samples;++i) assert(((uint8_t*)capture_samples)[i]==0x35);
+    for(size_t i=PICO_FLASH_SIZE_BYTES-2u*FLASH_SECTOR_SIZE;i<PICO_FLASH_SIZE_BYTES;++i)
+        assert(test_flash[i]==0xa5); // Existing calibration sectors untouched.
+    sound_enabled=true; settings_init();
+    assert(!sound_enabled && settings_current()->light==SETTINGS_LIGHT_LOW);
+    assert(settings_apply_display() && test_contrast==0x10);
+    open_app("settings");
+    handle_button_press(2); // Brightness selected.
+    test_screen_ok=false; handle_button_press(1);
+    assert(settings_current()->light==SETTINGS_LIGHT_LOW && !strcmp(settings_feedback,"SCREEN ERR"));
+    test_screen_ok=true; handle_button_press(0); handle_button_press(1); // Sound on.
+    assert(sound_enabled);
+    handle_button_press(0); handle_button_press(1); // Wrap to SAVE EXIT.
+    assert(!app_current());
+    sound_enabled=false; settings_init(); assert(sound_enabled);
+    capture_complete=false;
+}
+
 static void sample_xyz(int16_t x,int16_t y,int16_t z) {
     AppSample sample={.raw={x,y,z},.corrected={x,y,z},.filtered={x,y,z},.time_ms=test_now};
     app_publish_sample(&sample);
@@ -123,8 +165,9 @@ static void test_capture_controls(void) {
 
 int main(void) {
     oled_ok=true; ui_set_display_available(true); ui_set_power(3900,true);
+    settings_init();
     test_lifecycle(); test_gyro_lifecycle(); test_friction_controls();
-    test_pendulum_controls(); test_capture_controls();
+    test_pendulum_controls(); test_capture_controls(); test_settings_controls();
     puts("App integration: every entry, lifecycle, controls, timing, capture protection and confirmation passed.");
     return 0;
 }

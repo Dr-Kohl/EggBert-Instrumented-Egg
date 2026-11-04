@@ -14,6 +14,7 @@
 #include "../src/apps/maze.c"
 #include "../src/apps/calibrate.c"
 #include "../src/apps/raw.c"
+#include "../src/apps/settings.c"
 #include "../build/app-core-test.inc"
 
 static size_t test_app_index(const char *id) {

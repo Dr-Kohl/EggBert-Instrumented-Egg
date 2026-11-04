@@ -15,6 +15,7 @@ implementation so you can follow that path before changing it.
 | [src/app.c](src/app.c), [src/home.c](src/home.c), [src/home_menu.c](src/home_menu.c) | App lifecycle and a single scrolling Home list | `app_open`, `app_return_home`, `home_menu_move` |
 | [src/main.c](src/main.c) | Hardware scheduler, shared capture, calibration persistence and USB commands | `main`, `service_capture`, `process_capture_sample` |
 | [src/ui.c](src/ui.c) | Common status header, page title and highlighted rows | `ui_begin`, `ui_menu_item` |
+| [src/settings.c](src/settings.c) and [src/apps/settings.c](src/apps/settings.c) | Sound/brightness preferences, live preview and separate flash journal | `settings_init`, `settings_save` |
 | [include/board.h](include/board.h) | GPIO assignments and bus settings | Find how a schematic net becomes a software pin |
 | [src/lsm6dsv.c](src/lsm6dsv.c) | IMU identification, configuration, SPI reads and FIFO decoding | `lsm6dsv_init`, `lsm6dsv_dual_fifo_read` |
 | [include/lsm6dsv.h](include/lsm6dsv.h) | Sensor driver interface and sample structures | Distinguish raw XYZ samples from quaternions |

@@ -1,5 +1,6 @@
 /*
- * RP2354A has 2 MB of in-package flash.  Keep its last two erase sectors
- * (8 KB) out of the application image for redundant calibration records.
+ * RP2354A has 2 MB of in-package flash. Reserve four erase sectors (16 KB):
+ * two for user settings, then the two existing calibration sectors. Their
+ * original calibration offsets are preserved for firmware upgrades.
  */
-FLASH(rx) : ORIGIN = 0x10000000, LENGTH = 2088960
+FLASH(rx) : ORIGIN = 0x10000000, LENGTH = 2080768

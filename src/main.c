@@ -17,6 +17,7 @@
 #include "egg_format.h"
 #include "accel_select.h"
 #include "sound.h"
+#include "settings.h"
 #include "beam_trigger.h"
 #include "beam_frequency.h"
 #include "app.h"
@@ -1427,6 +1428,7 @@ int main(void) {
     stdio_init_all();
     setup_gpio();
     sound_init();
+    settings_init();
     sleep_ms(1500);
     printf("EggBert RP2354A bring-up starting\n");
 
@@ -1436,6 +1438,7 @@ int main(void) {
 
     oled_ok = ssd1306_init();
     ui_set_display_available(oled_ok);
+    if (!settings_apply_display()) printf("ERROR: could not apply saved display brightness.\n");
     printf("OLED at 0x%02X: %s\n", OLED_I2C_ADDRESS, oled_ok ? "OK" : "NOT FOUND");
     sample_power();
     bool imu_ok = lsm6dsv_init();

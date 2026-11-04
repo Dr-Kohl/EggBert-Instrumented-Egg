@@ -4,6 +4,8 @@
 #include <stdint.h>
 
 bool ssd1306_init(void);
+// SSD1306 contrast control: low..high brightness, without changing pixels.
+bool ssd1306_set_contrast(uint8_t contrast);
 void ssd1306_clear(void);
 void ssd1306_text(uint8_t row, const char *text);
 // Logical portrait canvas: 64 pixels wide by 128 pixels tall.  Coordinates

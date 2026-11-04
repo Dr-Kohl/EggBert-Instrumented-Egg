@@ -2,7 +2,8 @@
 
 #include <stdbool.h>
 
-// Master audio toggle; configured in sound.c. True enables all cues.
+// Master audio toggle; sound.c supplies the fallback before saved settings load.
+// Use sound_set_enabled() for immediate runtime muting.
 extern bool sound_enabled;
 
 typedef enum {
@@ -16,6 +17,7 @@ typedef enum {
 
 // Core 0 only. Hardware PWM generates tones; alarm IRQs advance/stop them.
 void sound_init(void);
+void sound_set_enabled(bool enabled);
 void sound_play(sound_cue_t cue);
 void sound_stop(void);
 int sound_current_cue(void); // -1 when silent

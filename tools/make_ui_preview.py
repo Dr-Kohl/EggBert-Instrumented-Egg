@@ -77,11 +77,17 @@ cases = [('home', 'home_menu=(HomeMenu){0}; home_draw();'),
   'home_draw();'),
  ('home-scroll-up', 'home_menu_move(&home_menu,app_entry_count,false); home_draw();'),
  ('home-wrap-last',
-  'home_menu=(HomeMenu){0}; home_menu_move(&home_menu,app_entry_count,false); home_draw();')]
+  'home_menu=(HomeMenu){0}; home_menu_move(&home_menu,app_entry_count,false); home_draw();'),
+ ('settings', 'settings_enter(); show_settings();'),
+ ('settings-muted', 'settings_set_sound(false); show_settings();'),
+ ('settings-bright', 'settings_selection=1; settings_set_light(SETTINGS_LIGHT_HIGH); show_settings();'),
+ ('settings-exit', 'settings_selection=2; show_settings();'),
+ ('settings-save-error', 'settings_feedback="SAVE ERROR"; show_settings();')]
 program = r'''
 #include "../tests/app_fixture.h"
 int ui_preview(void) {
     oled_ok=true; ui_set_display_available(true); ui_set_power(3900,true);
+    settings_init();
     AppSample preview_sample={.corrected={-32768,16384,1234},.filtered={1500,-2500,16000}};
     app_publish_sample(&preview_sample);
     friction_trial_count=5;

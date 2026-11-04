@@ -38,7 +38,7 @@ set(PICO_BOARD pico2 CACHE STRING "Board type")
 # RP2354A uses the RP2350 family. Override PICO_SDK_PATH if your SDK lives elsewhere.
 set(PICO_PLATFORM rp2350 CACHE STRING "Pico SDK platform")
 # EggBert uses the RP2354A's 2 MB in-package flash, not Pico 2's 4 MB default.
-# The final two 4 KB sectors are reserved for redundant calibration records.
+# The final four 4 KB sectors hold settings and calibration A/B records.
 set(PICO_FLASH_SIZE_BYTES 2097152 CACHE STRING "EggBert flash size" FORCE)
 
 # Use the requested SDK, or the extension's selected installation by default.
@@ -81,6 +81,7 @@ add_executable(eggbert_bringup
     src/lsm6dsv.c
     src/ssd1306.c
     src/sound.c
+    src/settings.c
     src/maze.c
     src/app.c
     src/home.c
@@ -102,9 +103,10 @@ target_link_libraries(eggbert_bringup PRIVATE
     hardware_clocks
 )
 
-# Leave the final 8 KB outside the linkable image.  The firmware uses those
-# two sectors as an A/B journal for inclinometer calibration.
+# Leave the final 16 KB outside the image: settings A/B, then calibration A/B.
 pico_set_linker_script(eggbert_bringup ${CMAKE_CURRENT_LIST_DIR}/memmap_eggbert.ld)
+set_property(TARGET eggbert_bringup APPEND PROPERTY LINK_DEPENDS
+    "${CMAKE_CURRENT_LIST_DIR}/eggbert_flash_region.ld")
 target_link_options(eggbert_bringup PRIVATE "LINKER:-L${CMAKE_CURRENT_LIST_DIR}")
 
 # USB CDC gives a serial log; no physical UART wiring is assumed.

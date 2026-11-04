@@ -9,5 +9,6 @@
   {"id": "beam", "label": "BEAM", "source": "src/apps/beam.c"},
   {"id": "maze", "label": "MAZE", "source": "src/apps/maze.c"},
   {"id": "calibrate", "label": "CALIBRATE", "source": "src/apps/calibrate.c"},
-  {"id": "raw", "label": "RAW XYZ", "source": "src/apps/raw.c"}
+  {"id": "raw", "label": "RAW XYZ", "source": "src/apps/raw.c"},
+  {"id": "settings", "label": "SETTINGS", "source": "src/apps/settings.c"}
 ]

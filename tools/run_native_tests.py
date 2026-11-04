@@ -40,8 +40,10 @@ compile_run('home-menu-test',['tests/home_menu_test.c','src/home_menu.c'],['-Iin
 compile_run('maze-test',['tests/maze_test.c','src/maze.c'],['-Iinclude'],strict=True)
 compile_run('sound-test',['tests/sound_test.c','src/sound.c'],
             ['-Itests/sound_stubs','-Itests/imu_stubs','-Iinclude','-Dsound_test=main'],strict=True)
+compile_run('settings-test',['tests/settings_test.c','tests/app_platform.c','src/ui.c','src/ssd1306.c'],
+            ['-Itests/app_stubs','-Iinclude','-Itests'],strict=True)
 common=['tests/app_platform.c','src/app.c','src/home.c','src/home_menu.c','src/ui.c',
-        'src/ssd1306.c','src/maze.c','build/generated/apps/app_registry.c']
+        'src/ssd1306.c','src/maze.c','src/settings.c','build/generated/apps/app_registry.c']
 # Existing fixtures inspect private states of the built-in apps. Additional
 # catalog apps compile separately, just as in firmware.
 fixture_sources=set(re.findall(r'"\.\./(src/apps/[^\"]+)"',(root/'tests/app_fixture.h').read_text()))

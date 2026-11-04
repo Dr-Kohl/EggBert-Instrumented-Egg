@@ -81,7 +81,9 @@ int sound_test(void) {
     CHECK(adds==old_adds && !enabled && !pin_high);
     sound_enabled=true; sound_play(SOUND_BUTTON);
     CHECK(enabled && sound_current_cue()==SOUND_BUTTON);
-    sound_enabled=false; sound_play(SOUND_BUTTON);
+    sound_set_enabled(false);
+    CHECK(!enabled && !pin_high && sound_current_cue()==-1);
+    sound_play(SOUND_BUTTON);
     CHECK(!enabled && !pin_high && sound_current_cue()==-1);
     CHECK(depth==0 && !failed);
     sound_enabled=configured_sound_enabled;

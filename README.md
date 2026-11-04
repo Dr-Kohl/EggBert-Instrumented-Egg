@@ -218,9 +218,10 @@ toolchain; fix the SDK import before investigating those errors.
 
 ## Expected behavior
 
-At boot, each LED lights for 300 ms. `sound_enabled` in `src/sound.c` controls
-all button/status sounds and the startup tune: true enables audio, false mutes
-it. The OLED then shows the portrait HOME menu after
+At boot, each LED lights for 300 ms. Saved sound preferences control all
+button/status sounds and the startup tune; `sound_enabled` in `src/sound.c`
+supplies the fallback when no preferences have been saved. The OLED then shows
+the portrait HOME menu after
 identifying either supported IMU (0x70 or 0x73). All screens use the full 64-pixel
 width, with a common USB/battery and V1/V2 header. On the older two-color panels,
 leftmost pixels are yellow; all-white panels use the same layout. Serial live
@@ -229,8 +230,23 @@ acceleration reporting is unchanged.
 The [website tutorial](docs/tutorial/index.html) includes current controls,
 rendered firmware screens, and guides for versions, calibration and Raw XYZ.
 Existing experiment illustrations are retained and identified as showing earlier
-screen arrangements. `python tools/run_native_tests.py` regenerates the 58-state
+screen arrangements. `python tools/run_native_tests.py` regenerates the 63-state
 framebuffer gallery and checks text bounds. PNGs are in `build/ui-preview/`.
+
+## Settings
+
+Choose **HOME -> SETTINGS**. Top/bottom move between **SOUND**, **LIGHT**, and
+**SAVE EXIT**; middle toggles sound or cycles screen brightness through
+Low / Mid / High. Changes preview immediately. Select SAVE EXIT to remember
+them after power-off and return Home. Saved mute takes effect before the
+startup tune on the next boot. This menu contains everyday preferences only.
+
+A SAVE ERROR keeps Settings open so you can retry; SCREEN ERR retains the
+previous brightness choice. Saving unchanged preferences does not write flash.
+Turning power off before SAVE EXIT discards changes since the last save.
+Settings use two CRC-checked flash sectors separate from the existing two
+calibration sectors, whose offsets are unchanged. Completed RAM recordings
+stay protected while preferences are changed and saved.
 
 ## Add or reorder an app
 
