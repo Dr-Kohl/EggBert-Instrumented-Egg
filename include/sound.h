@@ -1,5 +1,10 @@
 #pragma once
 
+#include <stdbool.h>
+
+// Master audio toggle; configured in sound.c. True enables all cues.
+extern bool sound_enabled;
+
 typedef enum {
     SOUND_BUTTON,
     SOUND_READY,

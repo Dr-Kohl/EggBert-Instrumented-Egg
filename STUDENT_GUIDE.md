@@ -10,7 +10,11 @@ implementation so you can follow that path before changing it.
 
 | File | Responsibility | Good place to begin |
 | --- | --- | --- |
-| [src/main.c](src/main.c) | Application state, activities, calibration, capture, USB commands, menus | `main`, `service_capture`, `process_capture_sample` |
+| [apps.json](apps.json) and [include/app.h](include/app.h) | Home order, labels, sources and the App callback interface | Add one entry and its `const App <id>_app` C file |
+| [src/apps](src/apps) | Each activity's session state, display, controls and sample/timer processing | Follow one App descriptor's callbacks |
+| [src/app.c](src/app.c), [src/home.c](src/home.c), [src/home_menu.c](src/home_menu.c) | App lifecycle and a single scrolling Home list | `app_open`, `app_return_home`, `home_menu_move` |
+| [src/main.c](src/main.c) | Hardware scheduler, shared capture, calibration persistence and USB commands | `main`, `service_capture`, `process_capture_sample` |
+| [src/ui.c](src/ui.c) | Common status header, page title and highlighted rows | `ui_begin`, `ui_menu_item` |
 | [include/board.h](include/board.h) | GPIO assignments and bus settings | Find how a schematic net becomes a software pin |
 | [src/lsm6dsv.c](src/lsm6dsv.c) | IMU identification, configuration, SPI reads and FIFO decoding | `lsm6dsv_init`, `lsm6dsv_dual_fifo_read` |
 | [include/lsm6dsv.h](include/lsm6dsv.h) | Sensor driver interface and sample structures | Distinguish raw XYZ samples from quaternions |
@@ -19,14 +23,16 @@ implementation so you can follow that path before changing it.
 | [src/ssd1306.c](src/ssd1306.c) | Display framebuffer, fonts, rotated coordinates and I2C transfer | `ui_pixel_unchecked`, `ssd1306_show` |
 | [src/sound.c](src/sound.c) | Passive speaker waveforms and timed cues | `sound_play`, `next_note` |
 | [include/gyro_session.h](include/gyro_session.h) | Gyro settling, bias estimation and peak angular rates | `gyro_session_sample` |
+| [src/maze.c](src/maze.c) and [include/maze.h](include/maze.h) | Random connected mazes, rolling ball collisions and edge scrolling | `maze_generate`, `maze_step`, `maze_scroll` |
 | [include/beam_trigger.h](include/beam_trigger.h) and [include/beam_frequency.h](include/beam_frequency.h) | Beam trigger and frequency estimate | Baseline settling, sustained trigger, autocorrelation |
 | [docs/app.js](docs/app.js) | File validation, USB, plots, sensor selection and CSV export | `parseEgg`, `automaticStream`, `displayCapture` |
 | [docs/orientation.js](docs/orientation.js) | Quaternion math, pose validation and heading recentering | `parse`, `absolute`, `stability` |
 | [tests](tests) and [tools](tools) | Regression checks, simulated hardware and development utilities | Read a test alongside the function it exercises |
 
 The `docs` directory is also the GitHub Pages website source. The firmware is
-built by [CMakeLists.txt](CMakeLists.txt); its four C translation units are
-`main.c`, `lsm6dsv.c`, `ssd1306.c`, and `sound.c`. Several small algorithms live
+built by [CMakeLists.txt](CMakeLists.txt), which generates the app registry and
+source list from `apps.json`. See README's **Add or reorder an app** example.
+Several small algorithms live
 in headers as `static inline` functions, so changing a header can change firmware.
 
 ## Follow one recording
@@ -106,6 +112,11 @@ can occur. The original samples remain available for examining such effects.
 
 ## Activities have different assumptions
 
+- **Maze** reads the normal live accelerometer, maps sensor +Y to screen right
+  and +X to screen down, and uses a temporary stationary neutral. Tilt drives
+  velocity through acceleration and drag. A fixed camera follows only when the
+  ball enters an edge margin. Maze/camera/physics state never owns the capture
+  buffer; the goal arrow is a direct bearing, not a pathfinding hint.
 - **Gentle Catch** confirms 100 ms of freefall, detects contact, and reports the
   largest absolute axis during a fixed 150 ms window. It uses the FIFO but does
   not write the protected recording arrays. It currently computes neither

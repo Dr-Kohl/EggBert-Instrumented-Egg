@@ -15,8 +15,12 @@ existing item order, page switching and button actions are preserved.
 Battery voltage refreshes on idle screens when its displayed tenth changes;
 active acquisition keeps its existing polling behavior.
 
-Follow-up: HOME 2 now orders BEAM, CALIBRATE, RAW XYZ, in both drawing and
-navigation. Calibration shows UP EXIT at every stage. The top button cancels
+Home now has one title, HOME, and one scrolling list from `apps.json`. Seven
+rows fit; selection reaching the third visible row from the corresponding edge
+pushes the viewport up/down. Navigation wraps and retains selection/scroll on
+app exit. App modules own activity state and controls through `include/app.h`.
+
+Calibration shows UP EXIT at every stage. The top button cancels
 the wizard, discards partial/staged readings, and returns to the selected
 CALIBRATE item without replacing the active calibration. Completing six faces
 now stages a candidate and displays MID SAVE; only that explicit middle-button

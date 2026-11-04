@@ -3,3 +3,4 @@
 *.elf
 *.map
 *.uf2
+__pycache__/

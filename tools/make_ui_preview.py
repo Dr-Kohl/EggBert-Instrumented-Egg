@@ -1,150 +1,121 @@
-"""Extract production OLED drawing functions into an ARM framebuffer preview.
+"""Generate native previews of the actual production App, Home and OLED code.
 
-Compile build/ui-preview.c with entry ui_preview using the project's bare-metal
-test flags and -Iinclude. Run run_arm_test.py with --dump-symbol preview_frames
---dump-size 65536 --dump-output build/ui-preview.bin. Then run this script
-with --render to write galleries and selected tutorial images. No board I/O.
+Run tools/run_native_tests.py for generation, compilation and rendering.
 """
 import json
-import re
 import struct
 import sys
 import zlib
 from pathlib import Path
-
-root = Path(__file__).resolve().parents[1]
-source = (root/'src/main.c').read_text()
-graphics = (root/'src/ssd1306.c').read_text()
-
-
-def function(text, name):
-    match = re.search(r'(?:static )?(?:void|int|float) '+name+r'\([^)]*\)\s*\{', text)
-    if not match:
-        raise ValueError(name)
-    end, depth = match.end(), 1
-    while depth:
-        depth += (text[end] == '{')-(text[end] == '}')
-        end += 1
-    return text[match.start():end]
-
-
-cases = [
-    ('home', 'ui_selection=0; show_home();'),
-    ('home-2', 'ui_selection=8; show_home();'),
-    ('battery-v1', 'usb_power_present=false; preview_model=LSM6DSV_MODEL_LSM6DSV; ui_selection=0; show_home(); usb_power_present=true; preview_model=LSM6DSV_MODEL_LSM6DSV320X;'),
-    ('accel', 'show_acceleration();'),
-    ('raw', 'show_raw_xyz();'),
-    ('level', 'show_inclinometer();'),
-    ('gyro-zero', 'gyro_ok=true; gyro_session.phase=GYRO_ZEROING; show_gyro();'),
-    ('gyro-peak', 'gyro_session.phase=GYRO_RUNNING; gyro_session.peak_mdps[0]=2000000; gyro_session.peak_mdps[1]=-1500000; gyro_session.peak_mdps[2]=500000; show_gyro();'),
-    ('record-menu', 'ui_selection=0; show_record_menu();'),
-    ('drop-menu', 'show_drop_test_menu();'),
-    ('catch-menu', 'show_challenges_menu();'),
-    ('record-arming', 'show_capture_wait_still();'),
-    ('record-ready', 'show_capture_armed();'),
-    ('record-event', 'trigger_was_freefall=true; show_capture_event();'),
-    ('record-done', 'show_capture_complete();'),
-    ('saved-options', 'show_capture_options();'),
-    ('erase', 'ui_selection=1; show_erase_confirm();'),
-    ('catch-ready', 'show_gentle_ready();'),
-    ('catch-fall', 'show_gentle_fall();'),
-    ('catch-measure', 'show_gentle_measure();'),
-    ('catch-result', 'gentle_peak_axis_counts=204595; show_gentle_result();'),
-    ('catch-320', 'gentle_peak_axis_counts=655360; show_gentle_result();'),
-    ('catch-clipped', 'gentle_has_highg=true; gentle_saturated=true; show_gentle_result();'),
-    ('calibrate', 'show_calibration();'),
-    ('calibrate-delay', 'calibration_armed=true; show_calibration(); calibration_armed=false;'),
-    ('calibrate-capture', 'calibration_collecting=true; show_calibration(); calibration_collecting=false;'),
-    ('calibrate-ready', 'calibration_faces_seen=63; calibration_ready_to_save=true; show_calibration();'),
-    ('calibrate-error', 'strcpy(calibration_feedback,"SAVE FAIL"); show_calibration(); calibration_ready_to_save=false;'),
-    ('calibrate-saved', 'calibration_complete=true; show_calibration();'),
-    ('friction-ready', 'friction_state=FRICTION_READY; show_friction();'),
-    ('friction-wait', 'friction_state=FRICTION_ARMED; friction_waiting_to_arm=true; show_friction();'),
-    ('friction-tilt', 'friction_waiting_to_arm=false; friction_last_stable_angle=34.5f; show_friction();'),
-    ('friction-result', 'friction_state=FRICTION_RESULT; show_friction();'),
-    ('friction-trials', 'friction_state=FRICTION_SUMMARY; friction_summary_selection=4; show_friction();'),
-    ('friction-rearm', 'friction_summary_selection=5; show_friction();'),
-    ('friction-exit', 'friction_summary_selection=6; show_friction();'),
-    ('pendulum-ready', 'pendulum_state=PENDULUM_READY; show_pendulum();'),
-    ('pendulum-wait', 'pendulum_state=PENDULUM_WAITING; show_pendulum();'),
-    ('pendulum-swing', 'pendulum_state=PENDULUM_MEASURING; show_pendulum();'),
-    ('pendulum-result', 'pendulum_state=PENDULUM_RESULT; show_pendulum();'),
-    ('beam-ready', 'beam_state=BEAM_READY; show_beam();'),
-    ('beam-wait', 'beam_state=BEAM_WAITING; show_beam();'),
-    ('beam-listen', 'beam_state=BEAM_LISTENING; show_beam();'),
-    ('beam-record', 'beam_state=BEAM_RECORDING; capture_target=BEAM_TOTAL_SAMPLES; capture_pretrigger=BEAM_PRE_SAMPLES; show_beam();'),
-    ('beam-result', 'beam_state=BEAM_RESULT; beam_result_hz=4.81f; show_beam();'),
-    ('beam-no-period', 'beam_result_hz=0; capture_clipped=true; show_beam();'),
-]
-
-glyph_array = graphics[graphics.index('static const uint8_t glyphs'):graphics.index('static int glyph_index')]
-
-if '--render' not in sys.argv:
-    prefix = r'''
-#include <stdio.h>
-#include <string.h>
-#include <math.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include "lsm6dsv.h"
-#include "egg_format.h"
-#include "gyro_session.h"
-#include "beam_trigger.h"
-#include "sound.h"
-#include "ssd1306.h"
-typedef unsigned uint;
-typedef uint64_t absolute_time_t;
-#define OLED_WIDTH 128u
-#define OLED_PAGES 8u
-#define UI_WIDTH 64u
-#define UI_HEIGHT 128u
-static uint8_t framebuffer[1024];
-uint8_t preview_frames[64][1024];
-static unsigned frame_count, text_overflows;
-static lsm6dsv_model_t preview_model=LSM6DSV_MODEL_LSM6DSV320X;
-lsm6dsv_model_t lsm6dsv_model(void) { return preview_model; }
-void sound_play(sound_cue_t cue) { (void)cue; }
-void ssd1306_show(void) { memcpy(preview_frames[frame_count++],framebuffer,1024); }
-// Bare-metal newlib locks: the preview is single threaded and has no I/O.
-void *__lock___sfp_recursive_mutex;
-void *__lock___malloc_recursive_mutex;
-void __retarget_lock_init_recursive(_LOCK_T p) { (void)p; }
-void __retarget_lock_close_recursive(_LOCK_T p) { (void)p; }
-void __retarget_lock_acquire_recursive(_LOCK_T p) { (void)p; }
-void __retarget_lock_release_recursive(_LOCK_T p) { (void)p; }
-'''
-    globals_text = source[source.index('#define CAPTURE_RATE_HZ'):source.index('static uint32_t calibration_crc32')]
-    gfx_names = ['ssd1306_clear','glyph_index','ui_pixel_unchecked','ssd1306_ui_pixel','ssd1306_ui_fill_rect',
-                 'ssd1306_ui_text','ssd1306_ui_text_double_height','ssd1306_ui_text_scaled']
-    gfx_parts = []
-    for name in gfx_names:
-        part = function(graphics,name)
-        if name.startswith('ssd1306_ui_text'):
-            scale = 'scale' if name.endswith('_scaled') else '1u'
-            part = part.replace('{', '{\n    if (strlen(text) && (x+(strlen(text)*6u-1u)*'+scale+'>64u || y+7u*'+('2u' if name.endswith('double_height') else scale)+'>128u)) ++text_overflows;',1)
-        gfx_parts.append(part)
-    helpers = ['ui_draw_status_header','ui_begin','ui_menu_item','format_acceleration','format_tilt',
-               'format_friction_value','format_friction_mu','friction_average_mu']
-    show_names = re.findall(r'static void (show_\w+)\(void\)\s*\{',source)
-    names = helpers+show_names
-    names.sort(key=lambda name: source.index(function(source,name)))
-    body = '''
+root=Path(__file__).resolve().parents[1]
+cases = [('home', 'home_menu=(HomeMenu){0}; home_draw();'),
+ ('home-2',
+  'home_menu=(HomeMenu){0}; for(unsigned i=0;i<9;++i) home_menu_move(&home_menu,app_entry_count,true); '
+  'home_draw();'),
+ ('home-maze', 'home_menu_select(&home_menu,app_entry_count,8); home_draw();'),
+ ('battery-v1',
+  'ui_set_power(3900,false); test_model=LSM6DSV_MODEL_LSM6DSV; home_menu=(HomeMenu){0}; home_draw(); '
+  'ui_set_power(3900,true); test_model=LSM6DSV_MODEL_LSM6DSV320X;'),
+ ('accel', 'show_acceleration();'),
+ ('raw', 'show_raw_xyz();'),
+ ('level', 'show_inclinometer();'),
+ ('gyro-zero', 'gyro_ok=true; gyro_session.phase=GYRO_ZEROING; show_gyro();'),
+ ('gyro-peak',
+  'gyro_session.phase=GYRO_RUNNING; gyro_session.peak_mdps[0]=2000000; gyro_session.peak_mdps[1]=-1500000; '
+  'gyro_session.peak_mdps[2]=500000; show_gyro();'),
+ ('record-menu', 'ui_selection=0; show_record_menu();'),
+ ('drop-menu', 'show_drop_test_menu();'),
+ ('catch-menu', 'show_challenges_menu();'),
+ ('record-arming', 'show_capture_wait_still();'),
+ ('record-ready', 'show_capture_armed();'),
+ ('record-event', 'trigger_was_freefall=true; show_capture_event();'),
+ ('record-done', 'show_capture_complete();'),
+ ('saved-options', 'show_capture_options();'),
+ ('erase', 'ui_selection=1; show_erase_confirm();'),
+ ('catch-ready', 'show_gentle_ready();'),
+ ('catch-fall', 'show_gentle_fall();'),
+ ('catch-measure', 'show_gentle_measure();'),
+ ('catch-result', 'gentle_peak_axis_counts=204595; show_gentle_result();'),
+ ('catch-320', 'gentle_peak_axis_counts=655360; show_gentle_result();'),
+ ('catch-clipped', 'gentle_has_highg=true; gentle_saturated=true; show_gentle_result();'),
+ ('calibrate', 'show_calibration();'),
+ ('calibrate-delay', 'calibration_armed=true; show_calibration(); calibration_armed=false;'),
+ ('calibrate-capture', 'calibration_collecting=true; show_calibration(); calibration_collecting=false;'),
+ ('calibrate-ready', 'calibration_faces_seen=63; calibration_ready_to_save=true; show_calibration();'),
+ ('calibrate-error',
+  'strcpy(calibration_feedback,"SAVE FAIL"); show_calibration(); calibration_ready_to_save=false;'),
+ ('calibrate-saved', 'calibration_complete=true; show_calibration();'),
+ ('friction-ready', 'friction_state=FRICTION_READY; show_friction();'),
+ ('friction-wait', 'friction_state=FRICTION_ARMED; friction_waiting_to_arm=true; show_friction();'),
+ ('friction-tilt', 'friction_waiting_to_arm=false; friction_last_stable_angle=34.5f; show_friction();'),
+ ('friction-result', 'friction_state=FRICTION_RESULT; show_friction();'),
+ ('friction-trials', 'friction_state=FRICTION_SUMMARY; friction_summary_selection=4; show_friction();'),
+ ('friction-rearm', 'friction_summary_selection=5; show_friction();'),
+ ('friction-exit', 'friction_summary_selection=6; show_friction();'),
+ ('pendulum-ready', 'pendulum_state=PENDULUM_READY; show_pendulum();'),
+ ('pendulum-wait', 'pendulum_state=PENDULUM_WAITING; show_pendulum();'),
+ ('pendulum-swing', 'pendulum_state=PENDULUM_MEASURING; show_pendulum();'),
+ ('pendulum-result', 'pendulum_state=PENDULUM_RESULT; show_pendulum();'),
+ ('beam-ready', 'beam_state=BEAM_READY; show_beam();'),
+ ('beam-wait', 'beam_state=BEAM_WAITING; show_beam();'),
+ ('beam-listen', 'beam_state=BEAM_LISTENING; show_beam();'),
+ ('beam-record',
+  'beam_state=BEAM_RECORDING; capture_target=BEAM_TOTAL_SAMPLES; capture_pretrigger=BEAM_PRE_SAMPLES; '
+  'show_beam();'),
+ ('beam-result', 'beam_state=BEAM_RESULT; beam_result_hz=4.81f; show_beam();'),
+ ('beam-no-period', 'beam_result_hz=0; capture_clipped=true; show_beam();'),
+ ('maze-ready', 'maze_generate(&maze_game,12345); maze_phase=MAZE_READY; show_maze();'),
+ ('maze-centering', 'maze_phase=MAZE_CENTERING; show_maze();'),
+ ('maze-playing', 'maze_phase=MAZE_PLAYING; show_maze();'),
+ ('maze-scroll', 'maze_game.x=78; maze_game.y=114; maze_scroll(&maze_game); show_maze();'),
+ ('maze-pause', 'maze_phase=MAZE_PAUSED; maze_menu_selection=0; show_maze();'),
+ ('maze-exit', 'maze_menu_selection=4; show_maze();'),
+ ('maze-finished', 'maze_phase=MAZE_FINISHED; maze_elapsed_ms=123000; show_maze();'),
+ ('maze-error', 'maze_phase=MAZE_ERROR; show_maze();'),
+ ('home-scroll-trigger',
+  'home_menu=(HomeMenu){0}; for(unsigned i=0;i<4;++i) home_menu_move(&home_menu,app_entry_count,true); '
+  'home_draw();'),
+ ('home-scroll-up', 'home_menu_move(&home_menu,app_entry_count,false); home_draw();'),
+ ('home-wrap-last',
+  'home_menu=(HomeMenu){0}; home_menu_move(&home_menu,app_entry_count,false); home_draw();')]
+program = r'''
+#include "../tests/app_fixture.h"
 int ui_preview(void) {
-    oled_ok=true; usb_power_present=true; power_out_millivolts=3900;
-    live_accel_x=-32768; live_accel_y=16384; live_accel_z=1234;
-    level_accel_x=1500; level_accel_y=-2500; level_accel_z=16000;
+    oled_ok=true; ui_set_display_available(true); ui_set_power(3900,true);
+    AppSample preview_sample={.corrected={-32768,16384,1234},.filtered={1500,-2500,16000}};
+    app_publish_sample(&preview_sample);
     friction_trial_count=5;
-    for (unsigned i=0;i<5;++i) { friction_trial_angles[i]=25.5f+i; friction_trial_mu[i]=0.5f+i*0.1f; }
+    for(unsigned i=0;i<5;++i) { friction_trial_angles[i]=25.5f+i; friction_trial_mu[i]=0.5f+i*0.1f; }
     pendulum_period_count=4; pendulum_period_total_ms=4000;
-'''+ '\n'.join(code for _,code in cases)+f'\n    return text_overflows ? 100+text_overflows : frame_count!={len(cases)};\n}}\n'
-    output = root/'build/ui-preview.c'
-    output.write_text('\n'.join([prefix,globals_text,glyph_array,*gfx_parts,
-                                 *(function(source,name) for name in names),body]))
-    print(output)
+''' + '\n'.join(code for _, code in cases) + r'''
+    return test_text_overflows ? 100+(int)test_text_overflows : 0;
+}
+int main(void) {
+    test_frame_output=fopen("build/ui-preview.bin","wb");
+    if(!test_frame_output) return 1;
+    int result=ui_preview();
+    if(fclose(test_frame_output)) return 1;
+    if(test_frames!=EXPECTED_FRAMES) return 2;
+    printf("UI preview: %u states, %u text overflows.\n",test_frames,test_text_overflows);
+    return result;
+}
+'''
+program = program.replace('EXPECTED_FRAMES', str(len(cases)))
+
+if "--render" not in sys.argv:
+    (root/'build/ui-preview.c').write_text(program)
+    graphics=(root/'src/ssd1306.c').read_text()
+    graphics='#include "../tests/app_platform.h"\n'+graphics
+    for name,scale,height in [('ssd1306_ui_text','1u','1u'),('ssd1306_ui_text_double_height','1u','2u'),('ssd1306_ui_text_scaled','scale','scale')]:
+        start=graphics.index('void '+name+'(')
+        opening=graphics.index('{',start)+1
+        check='\n    if(strlen(text) && (x+(strlen(text)*6u-1u)*'+scale+'>64u || y+7u*'+height+'>128u)) ++test_text_overflows;'
+        graphics=graphics[:opening]+check+graphics[opening:]
+    (root/'build/ui-graphics-preview.c').write_text(graphics)
+    print(root/'build/ui-preview.c')
 else:
     frames = (root/'build/ui-preview.bin').read_bytes()
-    output = root.parent/'output/eggbert/full-width-ui'
+    output = root/'build/ui-preview'
     output.mkdir(parents=True,exist_ok=True)
     def png(path,width,height,pixels):
         def chunk(kind,data):

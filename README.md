@@ -4,13 +4,18 @@ New to the code? Start with the [student code guide](STUDENT_GUIDE.md) for the
 project map, measurement units, recording walkthrough, and suggested exercises.
 The guide describes existing behavior; it does not add new measurement features.
 
-HOME 2 is ordered BEAM, CALIBRATE, RAW XYZ. In calibration, the top button
+HOME is a single scrolling list. It shows seven entries and starts scrolling
+when selection reaches the third entry from either end of the visible list.
+Top/bottom wrap through the list; returning from an app retains its selection
+and scroll position. The order is defined once in `apps.json`.
+
+In calibration, the top button
 (UP EXIT) cancels at any stage before saving and keeps the previous calibration.
 After six faces the candidate stays in RAM; press MID SAVE to deliberately
 install it. Exiting earlier discards partial or completed unsaved readings.
-The cancel/explicit-save ARM harness is generated from the actual wizard
-functions by `tools/make_calibration_cancel_test.py`; compile its output with
-entry `calibration_cancel_test`, then use `tools/run_arm_test.py`.
+The cancel/explicit-save harness uses the actual Calibration App functions.
+Run `python tools/run_native_tests.py` to check it along with the other apps,
+scrolling, audio, maze physics, capture protection, and rendered screens.
 
 ## Shared firmware: version 1 and version 2 bring-up
 
@@ -198,13 +203,24 @@ cmake --build build
 ```
 
 `eggbert_bringup.uf2` is produced in `build/`. Hold BOOTSEL while connecting USB,
-then copy that UF2 to the RPI-RP2 drive. The project defaults to the Pico SDK
-bundled with the installed Arduino-Pico core when it is present.
+then copy that UF2 to the RPI-RP2 drive. With the Pico VS Code extension, the
+project uses its selected SDK/toolchain (currently SDK 2.3.1 and GCC 15.2).
+The default board is `pico2` for the RP2350 family; EggBert retains its own pin
+assignments and 2 MB flash layout. Explicit `PICO_SDK_PATH` and
+`PICO_TOOLCHAIN_PATH` CMake variables or environment variables override these
+defaults. No other developer's home-directory paths are required.
+
+If configuration previously failed before importing the SDK, refresh the cache
+with **CMake: Delete Cache and Reconfigure** in VS Code, then build again.
+The Windows linker errors mentioning `--major-image-version` or `kernel32`
+are secondary symptoms of configuring without the Pico cross-compilation
+toolchain; fix the SDK import before investigating those errors.
 
 ## Expected behavior
 
-At boot, each LED lights for 300 ms while a five-note startup tune plays on
-boards with the piezo fitted. The OLED then shows the portrait HOME menu after
+At boot, each LED lights for 300 ms. `sound_enabled` in `src/sound.c` controls
+all button/status sounds and the startup tune: true enables audio, false mutes
+it. The OLED then shows the portrait HOME menu after
 identifying either supported IMU (0x70 or 0x73). All screens use the full 64-pixel
 width, with a common USB/battery and V1/V2 header. On the older two-color panels,
 leftmost pixels are yellow; all-white panels use the same layout. Serial live
@@ -213,8 +229,78 @@ acceleration reporting is unchanged.
 The [website tutorial](docs/tutorial/index.html) includes current controls,
 rendered firmware screens, and guides for versions, calibration and Raw XYZ.
 Existing experiment illustrations are retained and identified as showing earlier
-screen arrangements. Use `tools/make_ui_preview.py` to regenerate the 46-state
-framebuffer gallery and text-bounds check; its docstring lists the build steps.
+screen arrangements. `python tools/run_native_tests.py` regenerates the 58-state
+framebuffer gallery and checks text bounds. PNGs are in `build/ui-preview/`.
+
+## Add or reorder an app
+
+Add one object to [apps.json](apps.json) and one C file. List order controls Home;
+there are no numeric menu IDs, page switches, or central activity switches to
+update. CMake validates the JSON and generates the registry/source list during
+configuration. Building after a manifest edit automatically reconfigures.
+JSON is a build input; the board does not need a JSON parser or filesystem.
+
+For example, append:
+
+```json
+{"id": "hello", "label": "HELLO", "source": "src/apps/hello.c"}
+```
+
+Create `src/apps/hello.c`:
+
+```c
+#include "app.h"
+#include "ui.h"
+
+static void hello_draw(void) {
+    if (!ui_display_available()) return;
+    ui_begin("HELLO");
+    ssd1306_ui_text(2, 40, "MID EXIT", true);
+    ssd1306_show();
+}
+
+static void hello_button(unsigned button) {
+    if (button == 1) app_return_home();
+}
+
+const App hello_app = {.draw = hello_draw, .button = hello_button};
+```
+
+The descriptor name is the JSON `id` plus `_app`. IDs must use lowercase
+letters, digits and underscores, beginning with a letter. Labels must fit ten
+supported OLED characters. Every entry owns an existing `.c` file inside the
+project; duplicate IDs and invalid/missing sources stop configuration clearly.
+
+[include/app.h](include/app.h) defines the optional callbacks:
+
+| Callback or flag | Responsibility |
+| --- | --- |
+| `enter`, `leave` | Initialize a session and release its resources; `leave` also runs when returning Home |
+| `draw` | Render current state, including the common header; never advance a measurement here |
+| `button` | Top = 0, middle = 1, bottom = 2; the coordinator redraws after input |
+| `tick` | Service nonblocking work each main-loop turn; render when the app's display deadline is due |
+| `sample` | Receive raw and calibrated live XYZ, shared filtered XYZ, and boot milliseconds; render as needed |
+| `sample_period_ms` | Request an application read interval; default 250 ms, independent of sensor output rate |
+| `owns_imu` | Service your own reads and suppress shared live polling, as Maze does |
+| `fast_tick` | Request the 1 ms loop delay, as Gyro and Maze do |
+
+Use `app_sample_current()` for the latest shared reading, `ui_begin(title)` for
+the standard power/version header, and `app_return_home()` to exit. A draw
+callback may also be called for a changed battery header, so it must not reset
+or advance app state. Use deadlines rather than sleeps in app callbacks.
+
+Existing activities live in [src/apps](src/apps). Record, Catch and Beam use
+small adapters to the shared capture service in `main.c`; capture buffers,
+FIFO integrity, protected data, calibration flash storage, and downloads remain
+firmware-owned. New apps do not need access to those private arrays. Navigation
+is blocked during acquisition; only the existing explicit stop/exit controls
+are permitted. Calibration changes become active only on explicit SAVE.
+
+Run `python tools/run_native_tests.py` with a native C compiler (`gcc` on PATH,
+or set `CC`). It also compiles an independent example app from just JSON + C,
+checks catalog validation/reordering, and exercises app lifecycle and input.
+Physical OLED, tilt, FIFO timing and both board versions still need hardware
+checks after flashing. The native suite never flashes a board.
 
 ### On-device capture workflow
 
@@ -306,6 +392,42 @@ an accidental trigger from the throwing motion. Those first-pass thresholds are
 intended to be tuned from real tests. It does not write flash. After a capture
 stops, the firmware returns the IMU to its existing 120 Hz, +/-2 g live-read
 configuration.
+
+## Tilt maze game
+
+Choose **HOME -> MAZE**, then **MID START**. Hold EggBert screen-up in a
+comfortable nearly flat posture and keep it still while CENTERING takes a
+temporary neutral reading. Tilt to roll the ball through the maze to the hollow
+square goal. The arrow beside MAZE points directly toward the goal, not along
+the solution route. The 12-by-18-cell maze scrolls only when the ball pushes into
+a 16-pixel margin near a viewport edge; the camera stays still otherwise.
+
+**MID PAUSE** opens RESUME, RESTART (same maze), NEW MAZE, RECENTER, and EXIT.
+Use top/bottom to move and middle to select. Pause freezes movement and elapsed
+time. RECENTER keeps the position and time while measuring a new neutral; it
+does not write the accelerometer calibration. **DN CANCEL** leaves centering;
+**DN EXIT** leaves the ready/win/error screen. On winning, MID NEW creates a new
+maze. Sensor loss holds the game until explicit retry or exit.
+
+Mazes are randomized connected spanning trees. The generator compares eight
+layouts and favors long, winding solution routes with dead ends, then places
+the goal at the cell farthest from the start by route distance. The rolling
+ball has drag, a tilt dead zone, a speed limit and radius-aware wall collisions.
+The game uses normal +/-2 g live acceleration on either board. Its own small
+RAM state leaves any protected capture and its metadata intact. No maze data
+is added to `.egg` downloads or flash storage.
+
+Native tests and actual OLED previews (run from this checkout):
+
+```powershell
+python tools/run_native_tests.py
+```
+
+Preview PNGs go to `build/ui-preview/`. Tests cover 1,000 seeds, graph and ball
+passage connectivity, route complexity, collision resistance, edge scrolling,
+neutral acquisition, pause/restart/timeout, and protected-capture preservation.
+Check tilt directions, sensitivity and OLED responsiveness on the physical
+board; simulation does not establish the feel or actual frame rate.
 
 ## Capture viewer web app
 

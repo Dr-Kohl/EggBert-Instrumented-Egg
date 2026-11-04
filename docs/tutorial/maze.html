@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tilt Maze | EggBert Tutorial</title><link rel="stylesheet" href="../style.css?v=tutorial-1"><link rel="stylesheet" href="tutorial.css?v=full-width-1"></head>
+<body><main class="tutorial">
+<header class="brand"><img class="brand-logo" src="../assets/eccv-logo.png" alt="Engineering, Computing, and Christian Vocation"><h1>Tilt Maze</h1></header>
+<nav class="tutorial-nav" aria-label="Tutorial navigation"><a class="file-button" href="index.html">Back to Tutorial menu</a><a class="file-button" href="../index.html">Capture Viewer</a></nav>
+<p class="menu-route">EggBert menu: <strong>HOME → MAZE</strong></p>
+<div class="guide-layout"><section>
+<h2>Roll to the goal</h2>
+<p>Press <strong>MID START</strong>, hold EggBert screen-up in a comfortable nearly flat position, and keep it still during CENTERING. This measures a temporary neutral posture for the game.</p>
+<p>Tilt to accelerate the filled ball. Return toward neutral to slow it down. Reach the hollow square to finish. Walls block the ball; it can slide along them.</p>
+<p>The 12-by-18-cell maze is larger than the screen. The view stays still until the ball enters a margin near an edge, then scrolls as the ball pushes farther. At the maze boundary the view stops scrolling.</p>
+<p>The arrow beside MAZE points directly toward the goal. It does not show the correct route or reveal the maze. Expect winding corridors, branches and dead ends. All cells are connected, so every generated maze has a solution.</p>
+</section><figure class="oled-preview"><img src="images/screens/maze-playing.png" width="192" height="384" alt="Scrolling maze with a filled ball, hollow square goal, and goal-direction arrow."><figcaption>Actual firmware rendering with a generated example maze.</figcaption></figure></div>
+<h2>Pause and controls</h2>
+<p>While playing, press <strong>MID PAUSE</strong>. Move with top/bottom and select with middle:</p>
+<ul><li><strong>RESUME:</strong> continue from the same position; velocity starts at zero.</li><li><strong>RESTART:</strong> reset the ball and timer in the same maze, then center again.</li><li><strong>NEW MAZE:</strong> replace the layout with a newly randomized maze.</li><li><strong>RECENTER:</strong> hold still to change neutral without resetting the position or timer.</li><li><strong>EXIT:</strong> return to MAZE on HOME.</li></ul>
+<p>Pause and centering do not count toward the play timer. <strong>DN CANCEL</strong> leaves centering. <strong>DN EXIT</strong> leaves the ready, win or error screen. After winning, <strong>MID NEW</strong> generates another maze. If sensor readings stop, the game is held until retry or exit.</p>
+<h2>Both EggBert versions</h2>
+<p>The game uses normal low-g acceleration on V1 and V2. It does not record an experiment, write flash, change saved calibration, or erase a protected capture. Keep power on until any wanted recording has been downloaded.</p>
+</main></body></html>

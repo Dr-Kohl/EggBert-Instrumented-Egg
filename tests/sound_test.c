@@ -34,8 +34,14 @@ alarm_id_t add_alarm_in_ms(uint32_t ms, alarm_callback_t cb, void *data, bool fi
 bool cancel_alarm(alarm_id_t which) { if (which!=id) failed=1; ++cancelled; return true; }
 
 int sound_test(void) {
+    bool configured_sound_enabled=sound_enabled;
     sound_play(SOUND_BUTTON); CHECK(adds==0);
     sound_init(); CHECK(!enabled && !pin_high && function==GPIO_FUNC_SIO);
+    // Exercise muting independently of the user's configured startup setting.
+    sound_enabled=false;
+    for (unsigned cue=0; cue<=SOUND_ERROR; ++cue) sound_play(cue);
+    CHECK(adds==0 && sound_current_cue()==-1 && !enabled && !pin_high);
+    sound_enabled=true;
     sound_play(SOUND_BUTTON);
     CHECK(sound_current_cue()==SOUND_BUTTON && enabled && duration==12);
     CHECK(applied.divider==150 && applied.wrap==332 && level==166);
@@ -67,6 +73,17 @@ int sound_test(void) {
     CHECK(callback(id,NULL)==360000 && applied.wrap==318);
     CHECK(callback(id,NULL)==0 && !enabled && function==GPIO_FUNC_SIO);
     int old_adds=adds; sound_play((sound_cue_t)99); CHECK(adds==old_adds);
+    sound_play(SOUND_READY);
+    sound_enabled=false;
+    CHECK(callback(id,NULL)==0 && !enabled && !pin_high && sound_current_cue()==-1);
+    old_adds=adds;
+    for (unsigned cue=0; cue<=SOUND_ERROR; ++cue) sound_play(cue);
+    CHECK(adds==old_adds && !enabled && !pin_high);
+    sound_enabled=true; sound_play(SOUND_BUTTON);
+    CHECK(enabled && sound_current_cue()==SOUND_BUTTON);
+    sound_enabled=false; sound_play(SOUND_BUTTON);
+    CHECK(!enabled && !pin_high && sound_current_cue()==-1);
     CHECK(depth==0 && !failed);
+    sound_enabled=configured_sound_enabled;
     return 0;
 }

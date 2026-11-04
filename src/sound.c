@@ -8,6 +8,8 @@
 #include "hardware/sync.h"
 #include "pico/stdlib.h"
 
+bool sound_enabled = true;
+
 typedef struct { uint16_t hz, ms; } note_t;
 // Zero frequency is a silent gap; zero duration terminates the cue.
 static const note_t cues[][6] = {
@@ -44,6 +46,12 @@ static void output(uint16_t hz) {
 static int64_t next_note(alarm_id_t id, void *unused) {
     (void)unused;
     if (id != alarm || active_cue < 0) return 0;
+    if (!sound_enabled) {
+        alarm = 0;
+        active_cue = -1;
+        output(0);
+        return 0;
+    }
     const note_t *note = &cues[active_cue][++note_index];
     output(note->hz);
     if (!note->ms) {
@@ -73,6 +81,7 @@ void sound_stop(void) {
 }
 
 void sound_play(sound_cue_t cue) {
+    if (!sound_enabled) { sound_stop(); return; }
     if (!initialized || (unsigned)cue > SOUND_ERROR) return;
     uint32_t irq = save_and_disable_interrupts();
     // Status cues take precedence over button clicks. No queue or heap buffer.
