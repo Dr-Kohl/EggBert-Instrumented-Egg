@@ -1,8 +1,9 @@
 # Hammer Hit H4: turn, turn back, relaxed pause
 
 Saved November 4, 2026. Branch: **codex/gyro-arming**, based on the H3
-**codex/hammer-hit** commit c4cf65d. H4 has not been flashed to a physical egg.
-The prior H3 hardware checks do not establish H4 physical reliability.
+**codex/hammer-hit** commit c4cf65d. H4 was programmed and flash-verified on November 4 on V2 device
+29DA76A03DEC6A11 (COM5); post-reboot status confirmed hammer-hit-4, IMU and OLED OK.
+The prior H3 hardware checks and H4 startup verification do not establish H4 physical gesture or hammer-impact reliability.
 The separate master settings/maze work is not merged into this branch.
 
 ## Use it
@@ -52,7 +53,7 @@ full compiler path). It runs six suites:
 - Actual IMU driver with SPI stubs, including simultaneous gyro/capture config.
 - Actual sound module, scheduled display module, and Beam recording regression.
 
-Native tests passed. See the delivered build notes for ARM build verification.
+Native tests passed. The ARM firmware build passed with Pico SDK 2.3.1 / GCC 15.2.1. H4 was subsequently programmed and flash-verified, with post-reboot status confirmed.
 Physical turn/back/pause ease, false activation while taping, gyro polling
 cadence/FIFO timing, sounds, and full launch/landing still need trials on both
 boards. No synthetic test guarantees the feel of the wrapped package.
@@ -68,4 +69,10 @@ cmake --build build
 
 Program the resulting `build/eggbert_bringup.elf` with Picotool as documented
 in PROGRAMMING_EGGBERT.md. Do not reuse an old binary or build cache. Avoid
-very long Windows compiler paths. No physical egg was programmed here.
+very long Windows compiler paths. H4 was programmed to device 29DA76A03DEC6A11 and verified on COM5. Further hammer trials remain to do.
+
+## Contest discussion and next work
+
+See [CONTEST_RESEARCH_HANDOFF.md](CONTEST_RESEARCH_HANDOFF.md) for the latest
+hammer-launch contest setup, 43 g device mass, NASA research links, measured
+throw/catch capture, example calculations and unresolved scoring decisions.

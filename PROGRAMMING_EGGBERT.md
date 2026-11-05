@@ -3,8 +3,9 @@
 The new development branch is `codex/gyro-arming`, based on `codex/hammer-hit`.
 It replaces three tosses with turn/back/relaxed pause. Confirm **BUILD H4** on
 the Hammer Hit screen and `hammer-hit-4` in serial `status` after programming.
-H4 has been compiled and tested in simulation/native harnesses; it has not yet
-been flashed or tested on a physical egg. Download any protected RAM recording
+H4 has been compiled and tested in native harnesses, then programmed and
+flash-verified on V2 device 29DA76A03DEC6A11 (COM5). Startup status confirmed
+hammer-hit-4, IMU and OLED OK. Physical hammer performance remains unverified. Download any protected RAM recording
 before programming: power-off or reflashing loses it.
 
 Build on your own PC with explicit SDK/compiler paths. The older machine paths

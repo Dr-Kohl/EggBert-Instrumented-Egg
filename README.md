@@ -2,6 +2,9 @@
 
 ## Hammer Hit (November 4, 2026)
 
+Contest setup, NASA research, example calculations and the next development
+steps are in [the contest research handoff](CONTEST_RESEARCH_HANDOFF.md).
+
 Continuing on another PC? See [the home-PC handoff](HAMMER_HIT_HANDOFF.md)
 for the branch, build setup, verification and remaining physical checks.
 
@@ -74,8 +77,9 @@ Build/program from this checkout using `PROGRAMMING_EGGBERT.md`. The artifact is
 (`CC` may name its full path). This checks gesture directions, relaxed pause,
 ordinary handling rejection, recording windows, sensor/lifecycle failures,
 concurrent gyro/FIFO configuration, sounds, display scheduling and Beam.
-Physical wrapped-turn/hammer trials remain necessary; H4 has not been flashed
-or physically verified in this change.
+Physical wrapped-turn/hammer trials remain necessary; H4 was subsequently flash-verified on V2 device 29DA76A03DEC6A11 (COM5);
+startup confirmed hammer-hit-4, IMU and OLED OK. Hammer-launch performance
+and wrapped-gesture reliability still need physical trials.
 
 New to the code? Start with the [student code guide](STUDENT_GUIDE.md) for the
 project map, measurement units, recording walkthrough, and suggested exercises.
