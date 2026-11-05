@@ -1,3 +1,18 @@
+## H4 update (November 4, 2026)
+
+The new development branch is `codex/gyro-arming`, based on `codex/hammer-hit`.
+It replaces three tosses with turn/back/relaxed pause. Confirm **BUILD H4** on
+the Hammer Hit screen and `hammer-hit-4` in serial `status` after programming.
+H4 has been compiled and tested in native harnesses, then programmed and
+flash-verified on V2 device 29DA76A03DEC6A11 (COM5). Startup status confirmed
+hammer-hit-4, IMU and OLED OK. Physical hammer performance remains unverified. Download any protected RAM recording
+before programming: power-off or reflashing loses it.
+
+Build on your own PC with explicit SDK/compiler paths. The older machine paths
+below are historical examples and may not exist on your computer. H4 retains
+the Hammer Hit branch's 2 MB flash/calibration layout; newer master settings
+and modular menus have not been merged into this branch.
+
 # Programming EggBert boards
 
 Use this procedure for every JLCPCB Instrumented Egg / EggBert board. It is intentionally specific: the normal workflow uploads an **ELF over the board's USB serial connection**, not a UF2 copied to an `RP2350` drive.
@@ -9,7 +24,7 @@ Use this procedure for every JLCPCB Instrumented Egg / EggBert board. It is inte
 - Branch `codex/hammer-hit` starts from public `master` / `calebeh-revision`
   commit `fad9fb5` and includes the shared version 1/version 2 firmware.
   Build and flash from this checkout for Hammer Hit work. Firmware `status`
-  identifies this build as `hammer-hit-3`.
+  identifies this build as `hammer-hit-4`.
 - The earlier checkout at `C:\Users\Kohlc\OneDrive - Cedarville University\Documents\ChatGPT\EggBert Instrumented Egg`
   has unfinished local changes; preserve them. Confirm the checkout and changes
   with `git log -1` and `git status` before building or programming.

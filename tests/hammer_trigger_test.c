@@ -1,5 +1,7 @@
 #include "hammer_trigger.h"
+#define CHECK(c) do { if (!(c)) return __LINE__; } while (0)
 
+static uint32_t clock_us;
 static hammer_event_t feed(hammer_trigger_t *h, int16_t x, int16_t y, int16_t z, uint32_t n) {
     hammer_event_t last=HAMMER_NONE;
     while (n--) {
@@ -8,85 +10,120 @@ static hammer_event_t feed(hammer_trigger_t *h, int16_t x, int16_t y, int16_t z,
     }
     return last;
 }
-static void toss(hammer_trigger_t *h) {
-    feed(h,0,0,4096,HAMMER_MS(30));
-    feed(h,0,0,0,HAMMER_MS(250));
-    feed(h,0,0,6000,HAMMER_MS(30));
-    feed(h,0,0,2048,HAMMER_MS(650));
+static hammer_event_t rotate(hammer_trigger_t *h, int16_t x, int16_t y, int16_t z, unsigned n) {
+    hammer_event_t last=HAMMER_NONE;
+    while (n--) {
+        feed(h,0,0,2048,16); // ~240 gyro readings/sec; real FIFO stays independent
+        clock_us+=4167;
+        hammer_event_t event=hammer_gyro_sample(h,x,y,z,clock_us);
+        if (event) last=event;
+    }
+    return last;
+}
+static void begin(hammer_trigger_t *h) {
+    hammer_reset(h);
+    hammer_sample(h,0,0,2048);
+    hammer_gyro_sample(h,0,0,0,clock_us);
 }
 static bool arm(hammer_trigger_t *h) {
-    hammer_reset(h);
-    feed(h,0,0,2048,HAMMER_MS(600));
-    for (unsigned i=0;i<3;++i) toss(h);
-    if (h->tosses!=3 || h->phase!=HAMMER_FINAL_SETTLE) return false;
-    feed(h,0,0,2048,HAMMER_MS(2100));
+    begin(h);
+    rotate(h,5143,0,0,240); // ~360 degrees, then back
+    rotate(h,-5143,0,0,240);
+    rotate(h,0,0,0,500);
     return h->phase==HAMMER_ARMED;
 }
 
 int hammer_trigger_test(void) {
     hammer_trigger_t h;
-    hammer_reset(&h);
-    // Vigorous shaking, including brief near-zero intervals, must not arm.
-    for (unsigned i=0;i<120;++i) {
-        feed(&h,0,0,2048,HAMMER_MS(600));
-        feed(&h,8000,0,2048,HAMMER_MS(30));
-        feed(&h,0,0,0,HAMMER_MS(40));
-        feed(&h,-8000,0,2048,HAMMER_MS(30));
-    }
-    if (h.phase>=HAMMER_ARMED || h.tosses) return 1;
-    // Dropping without a preceding push, or very long freefall, resets.
-    hammer_reset(&h); feed(&h,0,0,2048,HAMMER_MS(600));
-    feed(&h,0,0,0,HAMMER_MS(250));
-    if (h.tosses || h.phase!=HAMMER_SETTLE) return 2;
-    hammer_reset(&h); feed(&h,0,0,2048,HAMMER_MS(600));
-    feed(&h,0,0,4096,HAMMER_MS(30)); feed(&h,0,0,0,HAMMER_MS(1000));
-    if (h.tosses || h.phase!=HAMMER_SETTLE) return 3;
-    // Three valid tosses still require the final quiet interval.
-    if (!arm(&h)) return 4;
-    // An impact and 100 ms of flight is rejected; stay armed.
-    feed(&h,0,0,16000,HAMMER_MS(10));
-    feed(&h,0,0,0,HAMMER_MS(100));
-    feed(&h,0,0,2048,HAMMER_MS(30));
-    if (h.phase!=HAMMER_ARMED) return 5;
-    // Sustained flight confirms only after the full 200 ms.
-    feed(&h,0,0,16000,HAMMER_MS(10));
-    feed(&h,0,0,0,HAMMER_MS(200)-1u);
-    if (h.phase!=HAMMER_LAUNCH) return 6;
-    if (hammer_sample(&h,0,0,0)!=HAMMER_TRIGGERED || h.phase!=HAMMER_RECORDING) return 7;
-    if (h.launch_at-h.trigger_at!=1u || h.seq-h.trigger_at!=HAMMER_MS(200)) return 8;
-    // Small interruptions tolerated; sustained acceleration isn't freefall.
-    if (!arm(&h)) return 9;
-    feed(&h,0,0,5000,1);
-    feed(&h,0,0,0,HAMMER_MS(100));
-    feed(&h,0,0,2048,10);
-    if (feed(&h,0,0,0,HAMMER_MS(100))!=HAMMER_TRIGGERED) return 10;
-    if (!arm(&h)) return 11;
-    feed(&h,0,0,5000,1); feed(&h,0,0,0,HAMMER_MS(100));
-    feed(&h,0,0,2048,HAMMER_MS(6));
-    if (h.phase!=HAMMER_ARMED) return 12;
-    // Timeout expires at two minutes, including a pending launch candidate.
-    if (!arm(&h)) return 13;
-    h.seq=h.armed_at+120u*HAMMER_HZ-2u;
-    if (hammer_sample(&h,0,0,2048)!=HAMMER_NONE) return 14;
-    if (hammer_sample(&h,0,0,2048)!=HAMMER_TIMED_OUT || h.tosses || h.phase!=HAMMER_SETTLE) return 15;
-    // Partial sequences cannot persist indefinitely.
-    hammer_reset(&h); feed(&h,0,0,2048,HAMMER_MS(600)); toss(&h);
-    feed(&h,0,0,2048,16u*HAMMER_HZ);
-    if (h.tosses || h.phase>=HAMMER_ARMED) return 16;
-    // A roughly one-foot toss lasts ~500 ms. Modest push, noisy flight and
-    // soft support-only catch must count, without requiring a hard impact.
-    hammer_reset(&h); feed(&h,0,0,2048,HAMMER_MS(600));
-    for (unsigned i=0;i<3;++i) {
-        feed(&h,0,0,2700,HAMMER_MS(40)); // only 1.32 g
-        for (unsigned j=0;j<5;++j) {
-            feed(&h,300,100,200,HAMMER_MS(99));
-            feed(&h,0,0,1500,HAMMER_MS(1)); // brief interruption
+    // Both directions on all three axes, plus a diagonal with normal wobble.
+    const int16_t axes[][3]={{5143,0,0},{-5143,0,0},{0,5143,0},
+        {0,-5143,0},{0,0,5143},{0,0,-5143},{2970,2970,2970}};
+    for (unsigned a=0;a<sizeof axes/sizeof axes[0];++a) {
+        begin(&h);
+        CHECK(rotate(&h,axes[a][0],axes[a][1],axes[a][2],240)==HAMMER_TURN_ACCEPTED);
+        CHECK(h.phase==HAMMER_REVERSE && h.turns==1);
+        CHECK(rotate(&h,-axes[a][0],-axes[a][1],-axes[a][2],240)==HAMMER_TURN_ACCEPTED);
+        CHECK(h.phase==HAMMER_FINAL_SETTLE && h.turns==2);
+        // No fixed gravity reference: mild changing acceleration/orientation
+        // and ~24 deg/s hand movement still count as a relaxed pause.
+        for (unsigned i=0;i<480;++i) {
+            hammer_sample(&h,i%2 ? 300 : -300,500,i%2 ? 1800 : 2400);
+            clock_us+=4167;
+            hammer_gyro_sample(&h,200,-200,200,clock_us);
         }
-        feed(&h,0,0,2200,HAMMER_MS(100)); // no >1.5 g catch
-        feed(&h,0,0,2048,HAMMER_MS(650));
-        if (h.tosses!=i+1) return 17+i;
+        CHECK(h.phase==HAMMER_ARMED);
     }
-    feed(&h,0,0,2048,HAMMER_MS(2100));
-    if (h.phase!=HAMMER_ARMED) return 20;
+    // Slower deliberate turns work too, with no special start posture/pause.
+    begin(&h); rotate(&h,1286,100,0,800); rotate(&h,-1286,-100,0,800);
+    rotate(&h,0,0,0,500); CHECK(h.phase==HAMMER_ARMED);
+    // Forward-only wrapping turns cannot arm, even after a pause.
+    begin(&h); rotate(&h,0,0,5143,1200); rotate(&h,0,0,0,500);
+    CHECK(h.phase<HAMMER_ARMED);
+    // A perpendicular turn is not a return turn.
+    begin(&h); rotate(&h,5143,0,0,240); rotate(&h,0,-5143,0,240);
+    rotate(&h,0,0,0,500); CHECK(h.phase<HAMMER_ARMED);
+    // Small back-and-forth handling and translation/tossing don't arm it.
+    begin(&h);
+    for (unsigned i=0;i<100;++i) {
+        rotate(&h,5143,0,0,20); rotate(&h,-5143,0,0,20);
+        feed(&h,8000,0,2048,40); feed(&h,0,0,0,100);
+    }
+    CHECK(h.phase<HAMMER_ARMED && !h.turns);
+    // Half-turns don't accumulate across reversals into a full gesture.
+    begin(&h);
+    for (unsigned i=0;i<10;++i) {
+        rotate(&h,5143,0,0,120); rotate(&h,-5143,0,0,120);
+    }
+    CHECK(!h.turns);
+    // Below-deadband drift and an expired partial turn cannot accumulate.
+    begin(&h); rotate(&h,100,100,100,3000); CHECK(!h.turns);
+    rotate(&h,5143,0,0,100); rotate(&h,0,0,0,1500);
+    CHECK(h.phase==HAMMER_TURN && !h.turns);
+    rotate(&h,5143,0,0,100); CHECK(!h.turns);
+    // Reverse must also finish within six seconds (including idle time).
+    begin(&h); rotate(&h,5143,0,0,240); rotate(&h,0,0,0,1500);
+    CHECK(h.phase==HAMMER_TURN && !h.turns);
+    // A brief bump pauses the final rest rather than erasing progress.
+    begin(&h); rotate(&h,5143,0,0,240); rotate(&h,-5143,0,0,240);
+    rotate(&h,0,0,0,200); uint32_t quiet=h.quiet_us;
+    rotate(&h,1500,0,0,48); CHECK(h.quiet_us==quiet);
+    CHECK(rotate(&h,0,0,0,300)==HAMMER_BECAME_ARMED);
+    // Sustained turning restarts only the pause, retaining both turns.
+    begin(&h); rotate(&h,5143,0,0,240); rotate(&h,-5143,0,0,240);
+    rotate(&h,0,0,0,200); rotate(&h,1500,0,0,120);
+    CHECK(h.phase==HAMMER_FINAL_SETTLE && h.turns==2 && !h.quiet_us);
+    rotate(&h,0,0,0,300); CHECK(h.phase==HAMMER_FINAL_SETTLE);
+    rotate(&h,0,0,0,200); CHECK(h.phase==HAMMER_ARMED);
+    // Unsupported/freefall readings cannot satisfy rest; expiry resets quietly.
+    begin(&h); rotate(&h,5143,0,0,240); rotate(&h,-5143,0,0,240);
+    for (unsigned i=0;i<2000;++i) {
+        hammer_sample(&h,0,0,0); clock_us+=4167;
+        hammer_gyro_sample(&h,0,0,0,clock_us);
+    }
+    CHECK(h.phase==HAMMER_TURN && !h.turns);
+    // Missing readings/time jumps cannot invent a complete turn or pause.
+    begin(&h); clock_us+=1000000;
+    CHECK(hammer_gyro_sample(&h,32767,0,0,clock_us)==HAMMER_RESET);
+    CHECK(!h.turns);
+    // Microsecond clock wrap behaves like an ordinary fresh interval.
+    clock_us=UINT32_MAX-10000u;
+    CHECK(arm(&h));
+    // Launch behavior and its original acceleration sample clock are retained.
+    feed(&h,0,0,16000,HAMMER_MS(10)); feed(&h,0,0,0,HAMMER_MS(100));
+    feed(&h,0,0,2048,HAMMER_MS(30)); CHECK(h.phase==HAMMER_ARMED);
+    feed(&h,0,0,16000,HAMMER_MS(10)); feed(&h,0,0,0,HAMMER_MS(200)-1u);
+    CHECK(h.phase==HAMMER_LAUNCH);
+    CHECK(hammer_sample(&h,0,0,0)==HAMMER_TRIGGERED && h.phase==HAMMER_RECORDING);
+    CHECK(h.launch_at-h.trigger_at==1u && h.seq-h.trigger_at==HAMMER_MS(200));
+    CHECK(arm(&h)); feed(&h,0,0,5000,1); feed(&h,0,0,0,HAMMER_MS(100));
+    feed(&h,0,0,2048,10);
+    CHECK(feed(&h,0,0,0,HAMMER_MS(100))==HAMMER_TRIGGERED);
+    CHECK(arm(&h)); feed(&h,0,0,5000,1); feed(&h,0,0,0,HAMMER_MS(100));
+    feed(&h,0,0,2048,HAMMER_MS(6)); CHECK(h.phase==HAMMER_ARMED);
+    CHECK(arm(&h)); h.seq=h.armed_at+120u*HAMMER_HZ-2u;
+    CHECK(hammer_sample(&h,0,0,2048)==HAMMER_NONE);
+    CHECK(hammer_sample(&h,0,0,2048)==HAMMER_TIMED_OUT && !h.turns && h.phase==HAMMER_TURN);
+    // Arming cannot borrow an impact from the gesture as the launch impulse.
+    CHECK(arm(&h)); feed(&h,0,0,0,HAMMER_MS(250)); CHECK(h.phase==HAMMER_ARMED);
     return 0;
 }

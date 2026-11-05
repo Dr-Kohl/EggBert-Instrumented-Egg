@@ -128,6 +128,8 @@ static bool trigger_detected;
 static bool capture_is_beam;
 static bool capture_is_hammer;
 static hammer_trigger_t hammer;
+static bool hammer_gyro_running;
+static uint32_t hammer_gyro_last_ms;
 static uint32_t hammer_armed_ms, hammer_tick_ms, hammer_display_ms;
 static uint32_t hammer_peak_mg;
 static bool hammer_limit_unknown;
@@ -984,9 +986,9 @@ static void show_hammer(void) {
         ssd1306_ui_text(2,100,"USB DL",true);
         ssd1306_ui_text(2,116,"MID OPT",true);
     } else if (!capture_active) {
-        ssd1306_ui_text(2,34,"3 TOSSES",true);
-        ssd1306_ui_text(2,50,"THEN STILL",true);
-        ssd1306_ui_text(2,66,"BUILD H3",true);
+        ssd1306_ui_text(2,34,"TURN BACK",true);
+        ssd1306_ui_text(2,50,"THEN PAUSE",true);
+        ssd1306_ui_text(2,66,"BUILD H4",true);
         ssd1306_ui_text(2,82,"MID BEGIN",true);
         ssd1306_ui_text(2,112,"UP HOME",true);
     } else if (hammer.phase == HAMMER_RECORDING) {
@@ -999,16 +1001,17 @@ static void show_hammer(void) {
         ssd1306_ui_text(2,54,line,true);
         ssd1306_ui_text(2,112,"MID EXIT",true);
     } else {
-        snprintf(line,sizeof line,"TOSSES %u/3",hammer.tosses);
+        snprintf(line,sizeof line,"TURNS %u/2",hammer.turns);
         ssd1306_ui_text(2,34,line,true);
-        const char *step=hammer.phase==HAMMER_SETTLE ? "HOLD STILL" :
-                         hammer.phase==HAMMER_TOSS_READY ? "TOSS NOW" :
-                         hammer.phase==HAMMER_TOSS_FLIGHT ? "IN AIR" :
-                         hammer.phase==HAMMER_CATCH ? "CATCH WAIT" : "HOLD STILL";
+        const char *step=hammer.phase==HAMMER_TURN ? "TURN ONCE" :
+                         hammer.phase==HAMMER_REVERSE ? "TURN BACK" : "EASY PAUSE";
         ssd1306_ui_text(2,54,step,true);
-        snprintf(line,sizeof line,"AIR %luMS",(unsigned long)hammer.last_air_ms);
+        unsigned progress=hammer.phase==HAMMER_FINAL_SETTLE ? hammer.quiet_us/1000u :
+            (unsigned)(hammer.phase==HAMMER_REVERSE ? hammer.reverse_degrees :
+                sqrtf(hammer.turn[0]*hammer.turn[0]+hammer.turn[1]*hammer.turn[1]+hammer.turn[2]*hammer.turn[2]));
+        snprintf(line,sizeof line,hammer.phase==HAMMER_FINAL_SETTLE ? "%u MS" : "%u DEG",progress);
         ssd1306_ui_text(2,72,line,true);
-        ssd1306_ui_text(2,88,hammer_reason_name(hammer.reason),true);
+        ssd1306_ui_text(2,88,hammer.phase==HAMMER_FINAL_SETTLE ? "RELAX HAND" : "ANY AXIS",true);
         ssd1306_ui_text(2,112,"MID EXIT",true);
     }
     if (capture_active) ssd1306_schedule_show();
@@ -1278,7 +1281,7 @@ static const char *capture_state_name(void) {
 }
 
 static void print_capture_status(void) {
-    printf("Firmware: hammer-hit-3 (2026-11-04).\n");
+    printf("Firmware: hammer-hit-4 (2026-11-04).\n");
     printf("IMU: %s, WHO_AM_I=0x%02X, stored high-g: %s, OLED: %s\n",
            lsm6dsv_model_name(), lsm6dsv_device_id(), capture_has_highg ? "yes" : "no",
            oled_ok ? "OK" : "NOT FOUND");
@@ -1303,10 +1306,12 @@ static void print_capture_status(void) {
                (unsigned long)trigger_index);
     printf(", %lu Hz, %lu counts/g\n", (unsigned long)capture_rate, (unsigned long)capture_scale);
     if (capture_is_hammer) {
-        printf("Hammer: phase=%u tosses=%u active=%u confirmed=%u peak_mg=%lu peak_unknown=%u\n",
-               (unsigned)hammer.phase,hammer.tosses,capture_active,trigger_detected,
+        printf("Hammer: phase=%u turns=%u active=%u confirmed=%u peak_mg=%lu peak_unknown=%u\n",
+               (unsigned)hammer.phase,hammer.turns,capture_active,trigger_detected,
                (unsigned long)hammer_peak_mg,hammer_limit_unknown);
-        printf("Hammer gesture: air_ms=%lu reason=%s\n",(unsigned long)hammer.last_air_ms,hammer_reason_name(hammer.reason));
+        printf("Hammer gesture: reverse_deg=%u pause_ms=%lu gyro=%s\n",
+               (unsigned)hammer.reverse_degrees,(unsigned long)(hammer.quiet_us/1000u),
+               hammer_gyro_running ? "on" : "off");
     }
 }
 
@@ -1549,6 +1554,16 @@ static void start_capture(bool hammer_mode) {
         return;
     }
     if (!verify_capture_range()) return;
+    if (hammer_mode) {
+        hammer_gyro_running=lsm6dsv_gyro_start();
+        if (!hammer_gyro_running) {
+            lsm6dsv_gyro_stop(); lsm6dsv_fifo_stop();
+            sound_play(SOUND_ERROR);
+            printf("ERROR: Hammer Hit gyro configuration failed; not armed.\n");
+            return;
+        }
+        hammer_gyro_last_ms=to_ms_since_boot(get_absolute_time());
+    }
     capture_has_highg = lsm6dsv_dual_fifo_active();
     capture_started_us = time_us_64();
     capture_last_sample_ms = to_ms_since_boot(get_absolute_time());
@@ -1558,7 +1573,7 @@ static void start_capture(bool hammer_mode) {
     if (hammer_mode) {
         hammer_display_ms=to_ms_since_boot(get_absolute_time());
         sound_play(SOUND_READY); show_hammer();
-        printf("HAMMER: three deliberate toss/catch/pause sequences, then hold still two seconds. Not armed yet.\n");
+        printf("HAMMER H4: turn once, turn back, then pause comfortably two seconds. Any axis. Not armed yet.\n");
     } else {
         show_capture_wait_still();
         printf("Capture armed from EggBert menu: hold still for one second, then wait for freefall or impact.\n");
@@ -1667,6 +1682,9 @@ static void summarize_hammer(void) {
 
 static void finish_capture(const char *reason) {
     if (!capture_active) return;
+    if (capture_is_hammer && hammer_gyro_running) {
+        lsm6dsv_gyro_stop(); hammer_gyro_running=false;
+    }
     if (capture_has_highg && lsm6dsv_dual_fifo_active()) {
         capture_dual_stats = lsm6dsv_dual_fifo_stats();
         capture_elapsed_us = time_us_64() - capture_started_us;
@@ -1905,15 +1923,9 @@ static void process_gentle_sample(const lsm6dsv_accel_sample_t *sample) {
     }
 }
 
-static void process_hammer_sample(const lsm6dsv_accel_sample_t *sample) {
-    store_capture_sample(sample);
-    if (hammer.phase == HAMMER_RECORDING) {
-        if (++post_trigger_samples >= POST_TRIGGER_SAMPLES)
-            finish_capture("Hammer Hit five-second window complete");
-        return;
-    }
-    hammer_event_t event=hammer_sample(&hammer,sample->x,sample->y,sample->z);
+static void handle_hammer_event(hammer_event_t event) {
     if (event == HAMMER_TRIGGERED) {
+        lsm6dsv_gyro_stop(); hammer_gyro_running=false;
         uint32_t after=hammer.seq-hammer.trigger_at;
         // Confirmation arrives after flight: retain history relative to the
         // original impact, not to the confirmation sample 200+ ms later.
@@ -1932,20 +1944,33 @@ static void process_hammer_sample(const lsm6dsv_accel_sample_t *sample) {
         hammer_armed_ms=hammer_tick_ms=to_ms_since_boot(get_absolute_time());
         sound_stop(); sound_play(SOUND_HAMMER_ARMED);
         printf("HAMMER ARMED: two minutes; waiting for impact followed by >=200 ms flight.\n");
-    } else if (event == HAMMER_TOSS_ACCEPTED) {
+    } else if (event == HAMMER_TURN_ACCEPTED) {
         sound_play(SOUND_TOSS);
-        printf("HAMMER: toss %u/3 accepted. %s\n",hammer.tosses,
-               hammer.tosses==3 ? "Hold still two seconds." : "Pause, then toss again.");
+        printf("HAMMER: turn %u/2 accepted. %s\n",hammer.turns,
+               hammer.turns==2 ? "Pause comfortably two seconds." : "Turn back the other way.");
     } else if (event == HAMMER_RESET || event == HAMMER_TIMED_OUT) {
         capture_state=CAPTURE_WAIT_STILL;
-        sound_stop(); sound_play(event == HAMMER_TIMED_OUT ? SOUND_TIMEOUT : SOUND_ERROR);
-        printf("HAMMER: %s. Not armed; start three tosses again.\n",event==HAMMER_TIMED_OUT ? "timeout" : hammer_reason_name(hammer.reason));
+        // Ordinary handling/partial gestures reset quietly.
+        if (event == HAMMER_TIMED_OUT) { sound_stop(); sound_play(SOUND_TIMEOUT); }
+        printf("HAMMER: %s. Not armed; turn once and turn back.\n",
+               event==HAMMER_TIMED_OUT ? "timeout" : "gesture expired");
     }
     // Never block the acquisition loop on I2C for every sample.
     if (event != HAMMER_NONE) show_hammer();
 }
 
+static void process_hammer_sample(const lsm6dsv_accel_sample_t *sample) {
+    store_capture_sample(sample);
+    if (hammer.phase == HAMMER_RECORDING) {
+        if (++post_trigger_samples >= POST_TRIGGER_SAMPLES)
+            finish_capture("Hammer Hit five-second window complete");
+        return;
+    }
+    handle_hammer_event(hammer_sample(&hammer,sample->x,sample->y,sample->z));
+}
+
 static void cancel_hammer(void) {
+    lsm6dsv_gyro_stop(); hammer_gyro_running=false;
     lsm6dsv_fifo_stop(); capture_active=false; capture_count=0;
     capture_state=CAPTURE_IDLE; hammer_reset(&hammer);
     sound_stop(); sound_play(SOUND_TIMEOUT);
@@ -1956,12 +1981,23 @@ static void cancel_hammer(void) {
 static void service_hammer(void) {
     if (!capture_active || ui_state != UI_HAMMER_HIT || !capture_is_hammer) return;
     uint32_t now=to_ms_since_boot(get_absolute_time());
+    if (hammer_gyro_running) {
+        int16_t gyro[3];
+        if (lsm6dsv_read_gyro(&gyro[0],&gyro[1],&gyro[2])) {
+            hammer_gyro_last_ms=now;
+            // service_capture has already drained the FIFO: use recent support
+            // data, and don't let missing acceleration masquerade as a pause.
+            if (now-capture_last_sample_ms>50u) hammer.supported=false;
+            handle_hammer_event(hammer_gyro_sample(&hammer,gyro[0],gyro[1],gyro[2],(uint32_t)time_us_64()));
+        } else if (now-hammer_gyro_last_ms>500u) {
+            cancel_hammer(); sound_play(SOUND_ERROR);
+            printf("ERROR: Hammer Hit gyro stopped responding; not armed.\n");
+            return;
+        }
+    }
     if (hammer.phase == HAMMER_ARMED || hammer.phase == HAMMER_LAUNCH) {
         if (now-hammer_armed_ms>=120000u) {
-            hammer_restart(&hammer,HAMMER_TIMED_OUT);
-            capture_state=CAPTURE_WAIT_STILL;
-            sound_stop(); sound_play(SOUND_TIMEOUT);
-            printf("HAMMER TIMEOUT: not armed; start three tosses again.\n");
+            handle_hammer_event(hammer_restart(&hammer,HAMMER_TIMED_OUT));
         } else if (now-hammer_tick_ms>=1000u) {
             hammer_tick_ms=now;
             if (sound_current_cue()<0) sound_play(SOUND_TICK);

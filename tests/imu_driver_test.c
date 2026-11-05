@@ -177,6 +177,15 @@ int imu_driver_test(void) {
         if (!model) CHECK(highg_writes == 0); // never touch v2-only registers on v1
         CHECK(lsm6dsv_drop_fifo_start());
         CHECK(lsm6dsv_dual_fifo_active() == (bool)model);
+        // H4 polls the gyro alongside (never inside) the recording FIFO.
+        uint8_t fifo_config=regs[0][9], accel_rate=regs[0][0x10];
+        CHECK(lsm6dsv_gyro_start());
+        CHECK(regs[0][9]==fifo_config && regs[0][0x10]==accel_rate && regs[0][0x17]==3);
+        CHECK(lsm6dsv_dual_fifo_active()==(bool)model);
+        regs[0][0x1e]=2;
+        CHECK(lsm6dsv_read_gyro(&x,&y,&z));
+        lsm6dsv_gyro_stop();
+        CHECK(regs[0][9]==fifo_config && regs[0][0x10]==accel_rate);
         if (model) {
             CHECK(regs[0][0x4e] == 0x34 && (regs[0][0x0b] & 8));
             lsm6dsv_accel_pair_t p[3];
