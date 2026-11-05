@@ -25,6 +25,7 @@
 #include "home.h"
 #include "ui.h"
 #include "calibration.h"
+#include "hammer_trigger.h"
 #include "pico/stdlib.h"
 #include "pico/stdio_usb.h"
 #include "ssd1306.h"
@@ -111,6 +112,13 @@ static bool capture_fifo_overrun;
 static bool trigger_was_freefall;
 static bool trigger_detected;
 static bool capture_is_beam;
+static bool capture_is_hammer;
+static hammer_trigger_t hammer;
+static bool hammer_gyro_running;
+static uint32_t hammer_gyro_last_ms;
+static uint32_t hammer_armed_ms, hammer_tick_ms, hammer_display_ms;
+static uint32_t hammer_peak_mg;
+static bool hammer_limit_unknown;
 static bool capture_clipped;
 static uint32_t capture_rate = CAPTURE_RATE_HZ;
 static uint32_t capture_scale = ACCEL_COUNTS_PER_G;
@@ -144,7 +152,7 @@ static bool calibration_valid;
 const calibration_record_t *calibration_current(void) { return &calibration; }
 typedef enum {
     UI_HOME, UI_APP, UI_RECORD, UI_DROP_TEST, UI_CHALLENGES, UI_BEAM,
-    UI_GENTLE_CATCH, UI_CAPTURE_COMPLETE, UI_CAPTURE_OPTIONS, UI_ERASE_CONFIRM,
+    UI_GENTLE_CATCH, UI_HAMMER_HIT, UI_CAPTURE_COMPLETE, UI_CAPTURE_OPTIONS, UI_ERASE_CONFIRM,
 } ui_state_t;
 
 static ui_state_t ui_state = UI_HOME;
@@ -400,6 +408,55 @@ static void show_gentle_result(void) {
     ssd1306_show();
 }
 
+static void show_hammer(void) {
+    if (!oled_ok) return;
+    char line[16];
+    ui_begin("HAMMER HIT");
+    if (capture_complete) {
+        bool data_error=capture_fifo_overrun || capture_dual_failed || !trigger_detected;
+        ssd1306_ui_text(2,30,"RECORDING",true);
+        ssd1306_ui_text(2,44,data_error ? "DATA ERROR" : "COMPLETE",true);
+        if (capture_count) {
+            snprintf(line,sizeof line,"MAX %lu.%lug",(unsigned long)(hammer_peak_mg/1000u),
+                     (unsigned long)((hammer_peak_mg%1000u)/100u));
+            ssd1306_ui_text(2,64,line,true);
+        } else ssd1306_ui_text(2,64,"NO DATA",true);
+        ssd1306_ui_text(2,82,hammer_limit_unknown ? "CLIPPED" : data_error ? "CHECK DATA" : "",true);
+        ssd1306_ui_text(2,100,"USB DL",true);
+        ssd1306_ui_text(2,116,"MID OPT",true);
+    } else if (!capture_active) {
+        ssd1306_ui_text(2,34,"TURN BACK",true);
+        ssd1306_ui_text(2,50,"THEN PAUSE",true);
+        ssd1306_ui_text(2,66,"ANY AXIS",true);
+        ssd1306_ui_text(2,82,"MID BEGIN",true);
+        ssd1306_ui_text(2,112,"UP HOME",true);
+    } else if (hammer.phase == HAMMER_RECORDING) {
+        ssd1306_ui_text(2,36,"RECORDING",true);
+        ssd1306_ui_text(2,54,"5 SEC",true);
+    } else if (hammer.phase >= HAMMER_ARMED) {
+        ssd1306_ui_text(2,34,"ARMED",true);
+        uint32_t elapsed=to_ms_since_boot(get_absolute_time())-hammer_armed_ms;
+        snprintf(line,sizeof line,"%lu SEC",(unsigned long)(elapsed<120000u ? (120000u-elapsed+999u)/1000u : 0u));
+        ssd1306_ui_text(2,54,line,true);
+        ssd1306_ui_text(2,112,"MID EXIT",true);
+    } else {
+        snprintf(line,sizeof line,"TURNS %u/2",hammer.turns);
+        ssd1306_ui_text(2,34,line,true);
+        const char *step=hammer.phase==HAMMER_TURN ? "TURN ONCE" :
+                         hammer.phase==HAMMER_REVERSE ? "TURN BACK" : "EASY PAUSE";
+        ssd1306_ui_text(2,54,step,true);
+        unsigned progress=hammer.phase==HAMMER_FINAL_SETTLE ? hammer.quiet_us/1000u :
+            (unsigned)(hammer.phase==HAMMER_REVERSE ? hammer.reverse_degrees :
+                sqrtf(hammer.turn[0]*hammer.turn[0]+hammer.turn[1]*hammer.turn[1]+hammer.turn[2]*hammer.turn[2]));
+        snprintf(line,sizeof line,hammer.phase==HAMMER_FINAL_SETTLE ? "%u MS" : "%u DEG",progress);
+        ssd1306_ui_text(2,72,line,true);
+        ssd1306_ui_text(2,88,hammer.phase==HAMMER_FINAL_SETTLE ? "RELAX HAND" : "ANY AXIS",true);
+        ssd1306_ui_text(2,112,"MID EXIT",true);
+    }
+    if (capture_active) ssd1306_schedule_show();
+    else ssd1306_show();
+}
+
 static void show_capture_wait_still(void) {
     if (!oled_ok) return;
     ui_begin("RECORD");
@@ -430,6 +487,7 @@ static void show_capture_event(void) {
 
 static void show_capture_complete(void) {
     if (capture_is_beam) { beam_state=BEAM_RESULT; show_beam(); return; }
+    if (capture_is_hammer) { show_hammer(); return; }
     if (!oled_ok) return;
     ui_begin("DONE");
     ssd1306_ui_text(2, 36, "USB", true);
@@ -470,6 +528,7 @@ void capture_app_draw(void) {
         if (gentle_result_available) show_gentle_result();
         else show_gentle_ready();
         break;
+    case UI_HAMMER_HIT: show_hammer(); break;
     case UI_CAPTURE_COMPLETE: show_capture_complete(); break;
     case UI_CAPTURE_OPTIONS: show_capture_options(); break;
     case UI_ERASE_CONFIRM: show_erase_confirm(); break;
@@ -486,7 +545,9 @@ void app_host_home(void) { ui_state=UI_HOME; ui_selection=0; }
 
 void capture_app_enter(CaptureApp app) {
     ui_selection=0;
-    if (app==CAPTURE_APP_RECORD) ui_state=UI_RECORD;
+    if (app==CAPTURE_APP_HAMMER) {
+        ui_state=capture_complete && !capture_is_hammer ? UI_CAPTURE_OPTIONS : UI_HAMMER_HIT;
+    } else if (app==CAPTURE_APP_RECORD) ui_state=UI_RECORD;
     else if (app==CAPTURE_APP_CATCH) ui_state=UI_CHALLENGES;
     else {
         beam_state=capture_complete && capture_is_beam ? BEAM_RESULT : BEAM_READY;
@@ -531,6 +592,7 @@ static const char *capture_state_name(void) {
 }
 
 static void print_capture_status(void) {
+    printf("Firmware: eggbert-integrated-h4 (2026-11-05).\n");
     printf("IMU: %s, WHO_AM_I=0x%02X, stored high-g: %s, OLED: %s\n",
            lsm6dsv_model_name(), lsm6dsv_device_id(), capture_has_highg ? "yes" : "no",
            oled_ok ? "OK" : "NOT FOUND");
@@ -554,6 +616,14 @@ static void print_capture_status(void) {
                capture_is_beam ? "BEAM FLICK" : trigger_was_freefall ? "FREEFALL" : "IMPACT",
                (unsigned long)trigger_index);
     printf(", %lu Hz, %lu counts/g\n", (unsigned long)capture_rate, (unsigned long)capture_scale);
+    if (capture_is_hammer) {
+        printf("Hammer: phase=%u turns=%u active=%u confirmed=%u peak_mg=%lu peak_unknown=%u\n",
+               (unsigned)hammer.phase,hammer.turns,capture_active,trigger_detected,
+               (unsigned long)hammer_peak_mg,hammer_limit_unknown);
+        printf("Hammer gesture: reverse_deg=%u pause_ms=%lu gyro=%s\n",
+               (unsigned)hammer.reverse_degrees,(unsigned long)(hammer.quiet_us/1000u),
+               hammer_gyro_running ? "on" : "off");
+    }
 }
 
 static size_t capture_first_index(void) {
@@ -569,7 +639,7 @@ static const lsm6dsv_accel_sample_t *capture_sample_at(size_t chronological_inde
 static lsm6dsv_accel_sample_t legacy_sample_at(size_t index) {
     lsm6dsv_accel_sample_t s = *capture_sample_at(index);
     // Dual captures retain raw counts; preserve the existing calibrated EGG1 export.
-    if (capture_has_highg) {
+    if (capture_has_highg || capture_is_hammer) {
         s.x=egg_correct_low(s.x,capture_metadata.offset_live[0],capture_metadata.scale_q16[0],capture_scale);
         s.y=egg_correct_low(s.y,capture_metadata.offset_live[1],capture_metadata.scale_q16[1],capture_scale);
         s.z=egg_correct_low(s.z,capture_metadata.offset_live[2],capture_metadata.scale_q16[2],capture_scale);
@@ -622,6 +692,7 @@ static void download_capture(void) {
     if (trigger_detected) flags |= EGG_FLAG_TRIGGERED;
     if (trigger_was_freefall) flags |= EGG_FLAG_FREEFALL;
     if (capture_fifo_overrun) flags |= EGG_FLAG_FIFO_OVERRUN;
+    if (capture_dual_failed) flags |= EGG_FLAG_INVALID;
     if (capture_is_beam) flags |= EGG_FLAG_BEAM;
     if (capture_clipped) flags |= EGG_FLAG_CLIPPED;
     uint32_t trigger_offset = 0xffffffffu;
@@ -751,12 +822,18 @@ static bool verify_capture_range(void) {
 // Snapshot calibration and configure acquisition before arming. A completed
 // recording blocks rearming until explicit erase; capture protection is separate
 // from which menu is currently visible.
-static void start_capture(void) {
+static void start_capture(bool hammer_mode) {
     if (capture_complete) {
         printf("Capture is protected. Erase it from the EggBert menu before rearming.\n");
         return;
     }
     capture_is_beam = false;
+    capture_is_hammer = hammer_mode;
+    if (hammer_mode) {
+        hammer_reset(&hammer);
+        hammer_peak_mg=0;
+        hammer_limit_unknown=false;
+    }
     capture_has_highg = capture_dual_failed = capture_diagnostic = capture_diagnostic_roll = false;
     capture_diagnostic_seen = 0;
     capture_dual_stats = (lsm6dsv_dual_stats_t){0};
@@ -788,14 +865,30 @@ static void start_capture(void) {
         return;
     }
     if (!verify_capture_range()) return;
+    if (hammer_mode) {
+        hammer_gyro_running=lsm6dsv_gyro_start();
+        if (!hammer_gyro_running) {
+            lsm6dsv_gyro_stop(); lsm6dsv_fifo_stop();
+            sound_play(SOUND_ERROR);
+            printf("ERROR: Hammer Hit gyro configuration failed; not armed.\n");
+            return;
+        }
+        hammer_gyro_last_ms=to_ms_since_boot(get_absolute_time());
+    }
     capture_has_highg = lsm6dsv_dual_fifo_active();
     capture_started_us = time_us_64();
     capture_last_sample_ms = to_ms_since_boot(get_absolute_time());
     capture_active = true;
     capture_state = CAPTURE_WAIT_STILL;
     next_capture_poll = make_timeout_time_ms(5);
-    show_capture_wait_still();
-    printf("Capture armed from EggBert menu: hold still for one second, then wait for freefall or impact.\n");
+    if (hammer_mode) {
+        hammer_display_ms=to_ms_since_boot(get_absolute_time());
+        sound_play(SOUND_READY); show_hammer();
+        printf("HAMMER H4: turn once, turn back, then pause comfortably two seconds. Any axis. Not armed yet.\n");
+    } else {
+        show_capture_wait_still();
+        printf("Capture armed from EggBert menu: hold still for one second, then wait for freefall or impact.\n");
+    }
 }
 
 static void start_dual_test(bool rolling) {
@@ -803,7 +896,7 @@ static void start_dual_test(bool rolling) {
         lsm6dsv_model() != LSM6DSV_MODEL_LSM6DSV320X) {
         printf("ERROR: dualtest requires v2 at HOME, idle, and no protected capture.\n"); return;
     }
-    start_capture();
+    start_capture(false);
     if (!capture_active) return;
     capture_diagnostic = true;
     capture_diagnostic_roll = rolling;
@@ -819,6 +912,7 @@ static void beam_arm(void) {
         return;
     }
     capture_is_beam = true;
+    capture_is_hammer = false;
     capture_has_highg = capture_dual_failed = capture_diagnostic = false;
     capture_clipped = false;
     capture_rate = BEAM_RATE_HZ;
@@ -873,8 +967,35 @@ static float estimate_beam_frequency(void) {
     return beam_frequency(signal,count);
 }
 
+static uint64_t magnitude_squared(const lsm6dsv_accel_sample_t *sample);
+static uint32_t sample_peak_axis(const lsm6dsv_accel_sample_t *sample);
+
+static void summarize_hammer(void) {
+    hammer_peak_mg=0;
+    hammer_limit_unknown=false;
+    bool use_high=false;
+    for (size_t i=0; i<capture_count; ++i) {
+        size_t physical=(capture_first_index()+i)%CAPTURE_MAX_SAMPLES;
+        lsm6dsv_accel_sample_t low=legacy_sample_at(i);
+        const lsm6dsv_accel_sample_t *raw=&capture_samples[physical];
+        const lsm6dsv_accel_sample_t *high=&capture_high_samples[physical];
+        uint32_t raw_peak=sample_peak_axis(raw), high_peak=sample_peak_axis(high);
+        if (capture_has_highg)
+            use_high=accel_select_high(use_high,sample_peak_axis(&low),raw_peak,high_peak);
+        uint32_t mg=use_high ? (uint32_t)(sqrtf((float)magnitude_squared(high))*10.417f+0.5f) :
+                              (uint32_t)(sqrtf((float)magnitude_squared(&low))*1000.0f/2048.0f+0.5f);
+        bool clipped=use_high ? high_peak>=30413u : raw_peak>=32563u;
+        if (clipped) hammer_limit_unknown=true;
+        if (!capture_has_highg && clipped) capture_clipped=true;
+        if (mg>hammer_peak_mg) hammer_peak_mg=mg;
+    }
+}
+
 static void finish_capture(const char *reason) {
     if (!capture_active) return;
+    if (capture_is_hammer && hammer_gyro_running) {
+        lsm6dsv_gyro_stop(); hammer_gyro_running=false;
+    }
     if (capture_has_highg && lsm6dsv_dual_fifo_active()) {
         capture_dual_stats = lsm6dsv_dual_fifo_stats();
         capture_elapsed_us = time_us_64() - capture_started_us;
@@ -882,6 +1003,7 @@ static void finish_capture(const char *reason) {
     lsm6dsv_fifo_stop();
     capture_active = false;
     capture_complete = true;
+    if (capture_is_hammer) summarize_hammer();
     sound_play(capture_fifo_overrun || capture_dual_failed ? SOUND_ERROR : SOUND_COMPLETE);
     capture_state = CAPTURE_COMPLETE;
     ui_state = UI_CAPTURE_COMPLETE;
@@ -901,6 +1023,7 @@ static void erase_capture(void) {
     capture_write_index = 0;
     capture_oldest_index = 0;
     capture_complete = false;
+    capture_is_hammer = false;
     capture_has_highg = capture_dual_failed = capture_diagnostic = false;
     capture_fifo_overrun = false;
     trigger_detected = false;
@@ -970,6 +1093,12 @@ static void exit_gentle_catch(void) {
 
 static void update_status_leds(bool imu_ok) {
     if (!imu_ok) { leds(0x04u); return; }
+    if (capture_is_hammer && capture_active && ui_state == UI_HAMMER_HIT) {
+        if (hammer.phase == HAMMER_RECORDING) leds(0x03u);
+        else if (hammer.phase >= HAMMER_ARMED) leds(0x01u);
+        else leds((to_ms_since_boot(get_absolute_time())/400u)%2u ? 0x02u : 0u);
+        return;
+    }
     switch (capture_state) {
     case CAPTURE_WAIT_STILL: leds(0x02u); break;
     case CAPTURE_WAIT_EVENT: leds(0x01u); break;
@@ -1025,7 +1154,8 @@ static bool magnitude_between(uint64_t magnitude, uint32_t minimum, uint32_t max
 // Trigger decisions receive calibrated low-g samples. V2 storage deliberately
 // uses the original pair instead, preserving data for later recalibration/viewing.
 static void store_capture_sample(const lsm6dsv_accel_sample_t *sample) {
-    capture_samples[capture_write_index] = capture_has_highg ? capture_raw_pair.low : *sample;
+    capture_samples[capture_write_index] = capture_has_highg ||
+        (capture_is_hammer && ui_state == UI_HAMMER_HIT) ? capture_raw_pair.low : *sample;
     if (capture_has_highg) capture_high_samples[capture_write_index] = capture_raw_pair.high;
     capture_write_index = (capture_write_index + 1u) % CAPTURE_MAX_SAMPLES;
     if (capture_count < CAPTURE_MAX_SAMPLES) ++capture_count;
@@ -1103,7 +1233,93 @@ static void process_gentle_sample(const lsm6dsv_accel_sample_t *sample) {
     }
 }
 
+static void handle_hammer_event(hammer_event_t event) {
+    if (event == HAMMER_TRIGGERED) {
+        lsm6dsv_gyro_stop(); hammer_gyro_running=false;
+        uint32_t after=hammer.seq-hammer.trigger_at;
+        // Confirmation arrives after flight: retain history relative to the
+        // original impact, not to the confirmation sample 200+ ms later.
+        trigger_index=(capture_write_index+CAPTURE_MAX_SAMPLES-1u-after)%CAPTURE_MAX_SAMPLES;
+        size_t keep=capture_pretrigger+1u+after;
+        if (keep>capture_count) keep=capture_count;
+        capture_oldest_index=(capture_write_index+CAPTURE_MAX_SAMPLES-keep)%CAPTURE_MAX_SAMPLES;
+        capture_count=keep;
+        post_trigger_samples=after;
+        trigger_detected=trigger_was_freefall=true;
+        capture_state=CAPTURE_POST_EVENT;
+        sound_stop(); sound_play(SOUND_RECORDING);
+        printf("HAMMER TRIGGER: >=200 ms flight confirmed; preserving original launch and landing.\n");
+    } else if (event == HAMMER_BECAME_ARMED) {
+        capture_state=CAPTURE_WAIT_EVENT;
+        hammer_armed_ms=hammer_tick_ms=to_ms_since_boot(get_absolute_time());
+        sound_stop(); sound_play(SOUND_HAMMER_ARMED);
+        printf("HAMMER ARMED: two minutes; waiting for impact followed by >=200 ms flight.\n");
+    } else if (event == HAMMER_TURN_ACCEPTED) {
+        sound_play(SOUND_TOSS);
+        printf("HAMMER: turn %u/2 accepted. %s\n",hammer.turns,
+               hammer.turns==2 ? "Pause comfortably two seconds." : "Turn back the other way.");
+    } else if (event == HAMMER_RESET || event == HAMMER_TIMED_OUT) {
+        capture_state=CAPTURE_WAIT_STILL;
+        // Ordinary handling/partial gestures reset quietly.
+        if (event == HAMMER_TIMED_OUT) { sound_stop(); sound_play(SOUND_TIMEOUT); }
+        printf("HAMMER: %s. Not armed; turn once and turn back.\n",
+               event==HAMMER_TIMED_OUT ? "timeout" : "gesture expired");
+    }
+    // Never block the acquisition loop on I2C for every sample.
+    if (event != HAMMER_NONE) show_hammer();
+}
+
+static void process_hammer_sample(const lsm6dsv_accel_sample_t *sample) {
+    store_capture_sample(sample);
+    if (hammer.phase == HAMMER_RECORDING) {
+        if (++post_trigger_samples >= POST_TRIGGER_SAMPLES)
+            finish_capture("Hammer Hit five-second window complete");
+        return;
+    }
+    handle_hammer_event(hammer_sample(&hammer,sample->x,sample->y,sample->z));
+}
+
+static void cancel_hammer(void) {
+    lsm6dsv_gyro_stop(); hammer_gyro_running=false;
+    lsm6dsv_fifo_stop(); capture_active=false; capture_count=0;
+    capture_state=CAPTURE_IDLE; hammer_reset(&hammer);
+    sound_stop(); sound_play(SOUND_TIMEOUT);
+    show_hammer();
+    printf("HAMMER: cancelled; no recording retained.\n");
+}
+
+static void service_hammer(void) {
+    if (!capture_active || ui_state != UI_HAMMER_HIT || !capture_is_hammer) return;
+    uint32_t now=to_ms_since_boot(get_absolute_time());
+    if (hammer_gyro_running) {
+        int16_t gyro[3];
+        if (lsm6dsv_read_gyro(&gyro[0],&gyro[1],&gyro[2])) {
+            hammer_gyro_last_ms=now;
+            // service_capture has already drained the FIFO: use recent support
+            // data, and don't let missing acceleration masquerade as a pause.
+            if (now-capture_last_sample_ms>50u) hammer.supported=false;
+            handle_hammer_event(hammer_gyro_sample(&hammer,gyro[0],gyro[1],gyro[2],(uint32_t)time_us_64()));
+        } else if (now-hammer_gyro_last_ms>500u) {
+            cancel_hammer(); sound_play(SOUND_ERROR);
+            printf("ERROR: Hammer Hit gyro stopped responding; not armed.\n");
+            return;
+        }
+    }
+    if (hammer.phase == HAMMER_ARMED || hammer.phase == HAMMER_LAUNCH) {
+        if (now-hammer_armed_ms>=120000u) {
+            handle_hammer_event(hammer_restart(&hammer,HAMMER_TIMED_OUT));
+        } else if (now-hammer_tick_ms>=1000u) {
+            hammer_tick_ms=now;
+            if (sound_current_cue()<0) sound_play(SOUND_TICK);
+        }
+    }
+    if (now-hammer_display_ms>=500u) { hammer_display_ms=now; show_hammer(); }
+}
+
 static void process_capture_sample(const lsm6dsv_accel_sample_t *sample) {
+    if (capture_is_hammer && ui_state == UI_HAMMER_HIT) {
+        process_hammer_sample(sample); return;
+    }
     if (capture_is_beam && ui_state == UI_BEAM) {
         uint32_t now = to_ms_since_boot(get_absolute_time());
         capture_last_sample_ms = now;
@@ -1207,9 +1423,9 @@ static void capture_sensor_failure(const char *reason, bool overrun) {
 // continuity fault stops acquisition rather than inventing missing sample pairs.
 static void service_capture(void) {
     if (!capture_active) return;
-    if (lsm6dsv_dual_fifo_active() &&
+    if ((lsm6dsv_dual_fifo_active() || (capture_is_hammer && ui_state == UI_HAMMER_HIT)) &&
         to_ms_since_boot(get_absolute_time()) - capture_last_sample_ms > 1500u) {
-        capture_sensor_failure("dual sensor timeout", false); return;
+        capture_sensor_failure("capture sensor timeout", false); return;
     }
     if (capture_is_beam && ui_state == UI_BEAM &&
         to_ms_since_boot(get_absolute_time())-capture_last_sample_ms>1500u) {
@@ -1254,11 +1470,13 @@ static void service_capture(void) {
         bool overrun = false;
         size_t read = lsm6dsv_fifo_read(fifo_samples, 64u, &overrun);
         if (overrun) {
-            if (ui_state == UI_GENTLE_CATCH) { capture_sensor_failure("FIFO overflow", true); break; }
+            if (ui_state == UI_GENTLE_CATCH || ui_state == UI_HAMMER_HIT) { capture_sensor_failure("FIFO overflow", true); break; }
             capture_fifo_overrun = true;
         }
         if (read == 0) break;
+        capture_last_sample_ms = to_ms_since_boot(get_absolute_time());
         for (size_t i = 0; i < read && capture_active; ++i) {
+            if (ui_state == UI_HAMMER_HIT) capture_raw_pair.low=fifo_samples[i];
             if (ui_state == UI_GENTLE_CATCH) {
                 gentle_current_clipped=sample_peak_axis(&fifo_samples[i])>=SATURATION_NEAR_COUNTS;
                 fifo_samples[i].x=calibration_correct_axis(fifo_samples[i].x,0u,ACCEL_COUNTS_PER_G);
@@ -1315,6 +1533,17 @@ static void handle_serial_command(void) {
                     sound_play(SOUND_COMPLETE);
                     printf("Sound test: GPIO22, 2400 Hz then 3000 Hz.\n");
                 }
+            } else if (strcmp(command, "hammer") == 0) {
+                if (capture_active || capture_complete || orientation_fused || ui_state != UI_HOME)
+                    printf("ERROR: hammer diagnostic requires idle HOME and no protected capture.\n");
+                else {
+                    for (size_t i=0;i<app_entry_count;++i)
+                        if (!strcmp(app_entries[i].id,"hammer")) { app_open(i); start_capture(true); break; }
+                }
+            } else if (strcmp(command, "hammer cancel") == 0) {
+                if (capture_active && ui_state == UI_HAMMER_HIT && hammer.phase != HAMMER_RECORDING)
+                    cancel_hammer();
+                else printf("ERROR: no waiting Hammer Hit session to cancel.\n");
             } else if (strcmp(command, "soundoff") == 0) {
                 sound_stop();
                 printf("Sound off.\n");
@@ -1354,7 +1583,7 @@ static void handle_serial_command(void) {
             } else if (strcmp(command, "clear") == 0) {
                 printf("ERROR: erase captures using the EggBert menu.\n");
             } else if (strcmp(command, "help") == 0) {
-                printf("Commands: status, download, orientation fused/on/off, dualtest [ring], download raw, soundtest, soundoff, help. Normal capture control uses the EggBert menu.\n");
+                printf("Commands: status, download, orientation fused/on/off, dualtest [ring], download raw, hammer, hammer cancel, soundtest, soundoff, help. Normal capture control uses the EggBert menu.\n");
             } else {
                 printf("Unknown command: %s (type help)\n", command);
             }
@@ -1368,6 +1597,14 @@ static void handle_serial_command(void) {
 void capture_app_button(unsigned button) {
     if (capture_state == CAPTURE_GENTLE_RESULT) {
         if (button == 1) exit_gentle_catch();
+        return;
+    }
+    if (ui_state == UI_HAMMER_HIT) {
+        if (button == 0) app_return_home();
+        else if (button == 1) {
+            if (capture_complete) { ui_state=UI_CAPTURE_OPTIONS; ui_selection=0; }
+            else start_capture(true);
+        }
         return;
     }
     if (ui_state == UI_BEAM) {
@@ -1385,7 +1622,7 @@ void capture_app_button(unsigned button) {
         else app_return_home();
         break;
     case UI_DROP_TEST:
-        if (ui_selection==0) start_capture();
+        if (ui_selection==0) start_capture(false);
         else { ui_state=UI_RECORD; ui_selection=0; }
         break;
     case UI_CHALLENGES:
@@ -1406,7 +1643,8 @@ void capture_app_button(unsigned button) {
 static void handle_button_press(unsigned button) {
     if (orientation_fused) { stop_orientation(); printf("ORIENTATION STOPPED: device menu\n"); }
     if (capture_active) {
-        if (ui_state == UI_GENTLE_CATCH && button == 1) { sound_play(SOUND_BUTTON); exit_gentle_catch(); }
+        if (ui_state == UI_HAMMER_HIT && button == 1 && hammer.phase != HAMMER_RECORDING) cancel_hammer();
+        else if (ui_state == UI_GENTLE_CATCH && button == 1) { sound_play(SOUND_BUTTON); exit_gentle_catch(); }
         else if (ui_state == UI_BEAM && button == 1 && beam_state != BEAM_RECORDING) {
             sound_play(SOUND_BUTTON);
             lsm6dsv_fifo_stop(); capture_active=false; capture_state=CAPTURE_IDLE;
@@ -1465,6 +1703,8 @@ int main(void) {
     while (true) {
         handle_serial_command();
         service_capture();
+        service_hammer();
+        if (oled_ok) ssd1306_service_show();
         service_orientation();
         if (!capture_active && !orientation_fused) app_tick();
         if (!capture_active && absolute_time_diff_us(get_absolute_time(), next_power_sample) <= 0) {

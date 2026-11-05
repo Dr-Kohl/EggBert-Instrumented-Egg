@@ -8,11 +8,18 @@ import sys
 import zlib
 from pathlib import Path
 root=Path(__file__).resolve().parents[1]
-cases = [('home', 'home_menu=(HomeMenu){0}; home_draw();'),
+cases = [('hammer-ready', 'show_hammer();'),
+ ('hammer-turn', 'capture_active=true; hammer_reset(&hammer); show_hammer(); for(unsigned i=0;i<8;++i) ssd1306_service_show();'),
+ ('hammer-reverse', 'hammer.phase=HAMMER_REVERSE; hammer.turns=1; show_hammer(); for(unsigned i=0;i<8;++i) ssd1306_service_show();'),
+ ('hammer-pause', 'hammer.phase=HAMMER_FINAL_SETTLE; hammer.turns=2; hammer.quiet_us=1500000; show_hammer(); for(unsigned i=0;i<8;++i) ssd1306_service_show();'),
+ ('hammer-armed', 'hammer.phase=HAMMER_ARMED; show_hammer(); for(unsigned i=0;i<8;++i) ssd1306_service_show();'),
+ ('hammer-recording', 'hammer.phase=HAMMER_RECORDING; show_hammer(); for(unsigned i=0;i<8;++i) ssd1306_service_show(); capture_active=false;'),
+ ('hammer-done', 'capture_complete=true; trigger_detected=true; capture_count=19200; hammer_peak_mg=31251; show_hammer(); capture_complete=false;'),
+('home', 'home_menu=(HomeMenu){0}; home_draw();'),
  ('home-2',
   'home_menu=(HomeMenu){0}; for(unsigned i=0;i<9;++i) home_menu_move(&home_menu,app_entry_count,true); '
   'home_draw();'),
- ('home-maze', 'home_menu_select(&home_menu,app_entry_count,8); home_draw();'),
+ ('home-maze', 'home_menu_select(&home_menu,app_entry_count,test_app_index("maze")); home_draw();'),
  ('battery-v1',
   'ui_set_power(3900,false); test_model=LSM6DSV_MODEL_LSM6DSV; home_menu=(HomeMenu){0}; home_draw(); '
   'ui_set_power(3900,true); test_model=LSM6DSV_MODEL_LSM6DSV320X;'),

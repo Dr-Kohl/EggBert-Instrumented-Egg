@@ -10,8 +10,8 @@ import argparse
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tmp/beam-test-runtime'))
 from elftools.elf.elffile import ELFFile
-from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_MODE_MCLASS
-from unicorn.arm_const import UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_R0, UC_ARM_REG_PC
+from unicorn import UC_HOOK_CODE, Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_MODE_MCLASS
+from unicorn.arm_const import UC_ARM_REG_SP, UC_ARM_REG_R1, UC_ARM_REG_LR, UC_ARM_REG_R0, UC_ARM_REG_PC
 
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('elf')
@@ -22,14 +22,21 @@ args=parser.parse_args()
 with open(args.elf,'rb') as source:
     elf=ELFFile(source)
     cpu=Uc(UC_ARCH_ARM,UC_MODE_THUMB|UC_MODE_MCLASS)
-    cpu.mem_map(0x10000000,0x200000)
-    cpu.mem_map(0x20000000,0x200000)
+    # App fixtures include 2 MB of simulated flash plus recording buffers.
+    cpu.mem_map(0x10000000,0x800000)
+    cpu.mem_map(0x20000000,0x800000)
     cpu.mem_map(0x30000000,0x1000)
     for segment in elf.iter_segments():
         if segment['p_type']=='PT_LOAD':
             cpu.mem_write(segment['p_vaddr'],segment.data())
     cpu.reg_write(UC_ARM_REG_SP,0x201ff000)
     cpu.reg_write(UC_ARM_REG_LR,0x30000001)
+    assertion=elf.get_section_by_name('.symtab').get_symbol_by_name('__assert_func')
+    if assertion:
+        def assertion_failed(cpu, address, size, user):
+            raise AssertionError(f"C assertion failed at line {cpu.reg_read(UC_ARM_REG_R1)}")
+        address=assertion[0]['st_value'] & ~1
+        cpu.hook_add(UC_HOOK_CODE,assertion_failed,begin=address,end=address)
     cpu.emu_start(elf.header['e_entry']|1,0x30000000,count=2000000000)
     if cpu.reg_read(UC_ARM_REG_PC)!=0x30000000:
         raise RuntimeError('ARM test exceeded instruction budget')

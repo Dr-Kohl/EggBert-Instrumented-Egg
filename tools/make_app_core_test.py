@@ -26,13 +26,14 @@ globals_text=globals_text.replace(function('calibration_current'),'')
 names=re.findall(r'static void (show_\w+)\(void\)\s*\{',source)
 names += ['capture_app_draw','app_host_can_open','app_host_prepare','app_host_home','capture_app_enter',
           'capture_app_sample_period_ms','capture_app_refresh_live','verify_capture_range','start_capture','beam_arm',
-          'erase_capture','start_gentle_catch','exit_gentle_catch','capture_app_button','handle_button_press']
+          'erase_capture','start_gentle_catch','exit_gentle_catch','cancel_hammer','capture_app_button','handle_button_press']
 # show_ui is called before its definition by some stubs; provide its prototype.
 names.sort(key=lambda name:source.index(function(name)))
 prefix='''#include <string.h>
 #include <math.h>
 #include "egg_format.h"
 #include "beam_trigger.h"
+#include "hammer_trigger.h"
 #include "ui.h"
 #include "home.h"
 #include "sound.h"

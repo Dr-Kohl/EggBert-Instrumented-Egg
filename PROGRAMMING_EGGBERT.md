@@ -1,12 +1,25 @@
+## Integrated update (November 5, 2026)
+
+Build from `master`. Hammer Hit's turn/back/pause behavior now uses Caleb's
+app catalog, scrolling menu, Maze and saved sound/brightness settings.
+Serial `status` identifies `eggbert-integrated-h4`. No combined firmware has
+been flashed yet; physical wrapped gesture and complete recording trials remain.
+Download any protected RAM recording before programming: power-off or reflashing
+loses it. The combined firmware retains master's reserved settings/calibration
+flash sectors; use the explicit SDK/compiler paths for your own computer.
+
 # Programming EggBert boards
 
 Use this procedure for every JLCPCB Instrumented Egg / EggBert board. It is intentionally specific: the normal workflow uploads an **ELF over the board's USB serial connection**, not a UF2 copied to an `RP2350` drive.
 
 ## Authoritative source and firmware
 
-- Shared version 1/version 2 bring-up checkout (October 20, 2026): `C:\Users\Kohlc\Documents\Codex\ADLD\EggBert`.
-- This checkout started from public `master` commit `33171c2` and contains the
-  shared-IMU bring-up changes. Build and flash from this checkout for that work.
+- Hammer Hit development checkout (November 4, 2026):
+  `C:\Users\Kohlc\Documents\Codex\ADLD\EggBert-Instrumented-Egg`.
+- Branch `master` combines Caleb's modular apps/settings with Hammer Hit and
+  gyro arming, and includes the shared version 1/version 2 firmware.
+  Build and flash from this checkout for Hammer Hit work. Firmware `status`
+  identifies this build as `eggbert-integrated-h4`.
 - The earlier checkout at `C:\Users\Kohlc\OneDrive - Cedarville University\Documents\ChatGPT\EggBert Instrumented Egg`
   has unfinished local changes; preserve them. Confirm the checkout and changes
   with `git log -1` and `git status` before building or programming.

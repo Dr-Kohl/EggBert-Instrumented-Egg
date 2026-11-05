@@ -163,11 +163,50 @@ static void test_capture_controls(void) {
     capture_active=false; beam_state=BEAM_READY; handle_button_press(0); assert(!app_current());
 }
 
+static void test_hammer_controls(void) {
+    capture_active=capture_complete=capture_is_hammer=false;
+    open_app("hammer");
+    assert(app_current()==&hammer_app && ui_state==UI_HAMMER_HIT);
+    handle_button_press(1);
+    assert(capture_active && capture_is_hammer && hammer_gyro_running);
+    assert(!app_open(test_app_index("maze")));
+    app_return_home(); assert(app_current()==&hammer_app);
+    handle_button_press(0); assert(capture_active);
+    handle_button_press(1);
+    assert(!capture_active && !hammer_gyro_running && !capture_count);
+    handle_button_press(0); assert(!app_current() && home_menu.selected==test_app_index("hammer"));
+    open_app("hammer"); test_gyro_ok=false; handle_button_press(1);
+    assert(!capture_active && !hammer_gyro_running);
+    test_gyro_ok=true; handle_button_press(1);
+    hammer.phase=HAMMER_RECORDING;
+    for (unsigned b=0;b<3;++b) handle_button_press(b);
+    assert(capture_active && app_current()==&hammer_app);
+    // Simulate completion, then navigate other apps without changing the saved
+    // acquisition identity, calibration or samples. BEGIN cannot overwrite it.
+    capture_active=false; capture_complete=true; capture_count=19200;
+    capture_metadata.calibration_generation=71; ui_state=UI_CAPTURE_COMPLETE;
+    memset(capture_samples,0x63,sizeof capture_samples);
+    app_return_home(); open_app("maze"); app_return_home(); open_app("hammer");
+    assert(ui_state==UI_HAMMER_HIT);
+    handle_button_press(1); assert(ui_state==UI_CAPTURE_OPTIONS);
+    handle_button_press(1); assert(ui_state==UI_ERASE_CONFIRM && ui_selection==0);
+    handle_button_press(1); assert(capture_complete && capture_count==19200);
+    assert(capture_metadata.calibration_generation==71);
+    for(size_t i=0;i<sizeof capture_samples;++i) assert(((uint8_t*)capture_samples)[i]==0x63);
+    handle_button_press(1); handle_button_press(2); handle_button_press(1);
+    assert(!capture_complete && !capture_is_hammer && !app_current());
+    // A saved non-Hammer capture opens its existing options, never a misleading
+    // Hammer summary or a fresh listener.
+    capture_complete=true; capture_is_beam=true; capture_count=7200;
+    open_app("hammer"); assert(ui_state==UI_CAPTURE_OPTIONS && !capture_active);
+    app_return_home(); capture_complete=capture_is_beam=false;
+}
+
 int main(void) {
     oled_ok=true; ui_set_display_available(true); ui_set_power(3900,true);
     settings_init();
     test_lifecycle(); test_gyro_lifecycle(); test_friction_controls();
-    test_pendulum_controls(); test_capture_controls(); test_settings_controls();
+    test_pendulum_controls(); test_capture_controls(); test_hammer_controls(); test_settings_controls();
     puts("App integration: every entry, lifecycle, controls, timing, capture protection and confirmation passed.");
     return 0;
 }

@@ -11,6 +11,7 @@
 #include "../src/apps/level.c"
 #include "../src/apps/friction.c"
 #include "../src/apps/beam.c"
+#include "../src/apps/hammer.c"
 #include "../src/apps/maze.c"
 #include "../src/apps/calibrate.c"
 #include "../src/apps/raw.c"

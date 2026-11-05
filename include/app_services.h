@@ -8,7 +8,7 @@ bool app_host_can_open(void);
 void app_host_prepare(void);
 void app_host_home(void);
 
-typedef enum { CAPTURE_APP_RECORD, CAPTURE_APP_CATCH, CAPTURE_APP_BEAM } CaptureApp;
+typedef enum { CAPTURE_APP_RECORD, CAPTURE_APP_CATCH, CAPTURE_APP_BEAM, CAPTURE_APP_HAMMER } CaptureApp;
 void capture_app_enter(CaptureApp app);
 void capture_app_draw(void);
 void capture_app_button(unsigned button);

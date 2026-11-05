@@ -1,5 +1,89 @@
 # EggBert RP2354A board bring-up
 
+## Hammer Hit (integrated November 5, 2026)
+
+Contest setup, NASA research, example calculations and the next development
+steps are in [the contest research handoff](CONTEST_RESEARCH_HANDOFF.md).
+
+Continuing on another PC? See [the home-PC handoff](HAMMER_HIT_HANDOFF.md)
+for the build setup, verification and remaining physical checks.
+
+Hammer Hit now uses the app catalog and scrolling Home menu on `master`, alongside
+Maze and persistent sound/brightness settings. Its cues respect the saved sound setting.
+
+**Build H4 replaces three tosses with: turn once, turn back, pause.**
+
+HOME > HAMMER HIT > MID BEGIN starts the listener. Finish wrapping and taping,
+then turn the whole package about one full revolution in any comfortable axis,
+turn it back the opposite way, and pause comfortably for about two seconds.
+One chirp marks each accepted turn; the rising melody and steady green mean
+ARMED. A tick once per second confirms that it remains armed. The display shows
+TURN ONCE / TURN BACK / EASY PAUSE and TURNS 0/2, 1/2, or 2/2.
+No toss, catch, precise orientation, or perfectly motionless hold is required.
+
+The on-demand gyro is polled at nominal 240 Hz alongside the unchanged
+accelerometer FIFO. The first turn accepts either sign on X, Y, Z, or a diagonal;
+the reverse must turn back along that measured direction. Each turn needs at
+least 270 degrees (a forgiving margin for the requested full turn), with a
+20 deg/s drift deadband and six seconds to finish each leg. Small reversing
+movements do not add together into a turn; continuing the same direction or
+rotating on an unrelated axis does not count as the reverse. The first turn
+also needs a reasonably consistent direction (net angle >=65% of path length).
+Partial/expired attempts reset quietly. A missing gyro stops the listener and
+reports an error, rather than allowing arming without sensor data.
+
+The final pause accepts hand movement up to 45 deg/s and acceleration magnitude
+between 0.65 and 1.4 g, without requiring a fixed orientation. It accumulates
+two seconds of supported, slow-motion readings. Brief bumps up to 350 ms pause
+that accumulation without erasing it. Longer movement restarts only the pause,
+retaining both turns; an eight-second pause-stage expiry resets the gesture.
+Fresh gyro and recent accelerometer readings are required. These are starting
+thresholds to test with the actual wrapped package, not a guarantee against
+every possible wrapping motion. Finish wrapping before deliberately arming.
+
+Once armed, an impact (>1.5 g) followed within 150 ms by at least 200 ms below
+0.45 g confirms a launch. Up to 5 ms per interruption and 10 ms total are
+allowed; the detector still requires 200 ms of actual near-weightlessness.
+Bumps without confirmed flight are ignored. Two minutes without confirmation
+plays a descending timeout cue and requires the turn/back/pause gesture again. The middle
+button cancels before confirmation; buttons cannot interrupt a confirmed event.
+
+The existing 19,200-sample circular buffer retains 0.5 seconds before the launch
+candidate plus 4.5 seconds including/after it, at 3840 Hz. Delayed confirmation
+does not shift the window or lose the strike. The two-minute waiting period
+does not allocate more storage. V2 retains both XYZ streams (230,400 bytes);
+V1 uses low-g only. Existing EGG2/EGG1 downloads and recording protection work
+unchanged. Recording is RAM-only: download before power-off or reflashing.
+
+Build H4 retains H3's priority on the recording: the completion screen shows RECORDING
+COMPLETE, a single MAX vector-magnitude estimate in g over the entire recording,
+USB DL and MID OPT. There is no 16 g judgment or HIT/END classification. On V2, automatic
+low/high selection uses the existing 12 g/8 g axis hysteresis and frozen low-g
+calibration. On V1, raw low-g clipping displays CLIPPED and sets the EGG1 clipped
+flag; the displayed maximum may underestimate the actual peak. FIFO/integrity
+faults display DATA ERROR / CHECK DATA, or NO DATA if no samples were obtained.
+Available samples remain protected and downloadable after errors or clipping.
+Peak values are sampled estimates, not a calibrated impact
+certification, and rotation or a sensor away from the rotation center can
+prevent flight recognition.
+
+USB bench commands `hammer` (idle HOME, no saved recording) and `hammer cancel`
+enter/cancel the same gesture workflow; neither bypasses arming. `status`
+identifies firmware `eggbert-integrated-h4` and reports phase, turn count, reverse angle,
+pause progress, gyro state and maximum.
+ARM tests: `tests/hammer_trigger_test.c` exercises gesture rejection, flight
+qualification and timeout; `tools/make_hammer_capture_test.py` extracts the
+actual buffer/score functions to verify both board versions and wrapped rings.
+
+Build/program from this checkout using `PROGRAMMING_EGGBERT.md`. The artifact is
+`build/eggbert_bringup.elf`. Run `python tools/run_hammer_native_tests.py` with a native Clang/GCC compiler
+(`CC` may name its full path). This checks gesture directions, relaxed pause,
+ordinary handling rejection, recording windows, sensor/lifecycle failures,
+concurrent gyro/FIFO configuration, sounds, display scheduling and Beam.
+Physical wrapped-turn/hammer trials remain necessary; H4 was subsequently flash-verified on V2 device 29DA76A03DEC6A11 (COM5);
+startup confirmed hammer-hit-4, IMU and OLED OK. Hammer-launch performance
+and wrapped-gesture reliability still need physical trials.
+
 New to the code? Start with the [student code guide](STUDENT_GUIDE.md) for the
 project map, measurement units, recording walkthrough, and suggested exercises.
 The guide describes existing behavior; it does not add new measurement features.

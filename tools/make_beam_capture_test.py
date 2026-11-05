@@ -26,6 +26,8 @@ prefix='''#include <stdint.h>
 #include <stdbool.h>
 #include "lsm6dsv.h"
 #include "beam_trigger.h"
+#include "hammer_trigger.h"
+#include "egg_format.h"
 typedef uint32_t absolute_time_t;
 #define printf(...) ((void)0)
 '''
@@ -42,6 +44,7 @@ static void show_beam(void) {}
 static void show_capture_armed(void) {}
 static void show_capture_event(void) {}
 static void process_gentle_sample(const lsm6dsv_accel_sample_t *s) { (void)s; }
+static void process_hammer_sample(const lsm6dsv_accel_sample_t *s) { (void)s; }
 static void finish_capture(const char *reason) { (void)reason; capture_active=false; capture_complete=true; capture_state=CAPTURE_COMPLETE; }
 '''
 functions='\n'.join(function(name) for name in [

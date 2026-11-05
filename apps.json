@@ -6,6 +6,7 @@
   {"id": "gyro", "label": "GYRO", "source": "src/apps/gyro.c"},
   {"id": "level", "label": "LEVEL", "source": "src/apps/level.c"},
   {"id": "friction", "label": "FRICTION", "source": "src/apps/friction.c"},
+  {"id": "hammer", "label": "HAMMER HIT", "source": "src/apps/hammer.c"},
   {"id": "beam", "label": "BEAM", "source": "src/apps/beam.c"},
   {"id": "maze", "label": "MAZE", "source": "src/apps/maze.c"},
   {"id": "calibrate", "label": "CALIBRATE", "source": "src/apps/calibrate.c"},

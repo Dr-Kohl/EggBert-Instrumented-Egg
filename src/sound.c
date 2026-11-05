@@ -14,11 +14,15 @@ typedef struct { uint16_t hz, ms; } note_t;
 // Zero frequency is a silent gap; zero duration terminates the cue.
 static const note_t cues[][6] = {
     [SOUND_BUTTON]    = {{3000,12},{0,0}},
+    [SOUND_TICK]      = {{3000,22},{0,0}},
     [SOUND_READY]     = {{2400,45},{3000,65},{0,0}},
     [SOUND_RECORDING] = {{3600,25},{0,0}},
     [SOUND_COMPLETE]  = {{2400,55},{0,35},{3000,85},{0,0}},
     // G6 B6 D7 B6 G7: a gentler five-note arpeggio, 900 ms total.
     [SOUND_STARTUP]   = {{1568,120},{1976,120},{2349,180},{1976,120},{3136,360},{0,0}},
+    [SOUND_TOSS]      = {{3000,70},{0,0}},
+    [SOUND_HAMMER_ARMED] = {{1800,100},{2400,100},{3000,250},{0,100},{3000,250},{0,0}},
+    [SOUND_TIMEOUT]   = {{3000,130},{2400,130},{1800,250},{0,0}},
     [SOUND_ERROR]     = {{1800,90},{0,60},{1800,90},{0,0}},
 };
 static alarm_id_t alarm;
