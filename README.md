@@ -5,31 +5,41 @@
 Continuing on another PC? See [the home-PC handoff](HAMMER_HIT_HANDOFF.md)
 for the branch, build setup, verification and remaining physical checks.
 
-HOME 2 > HAMMER HIT > MID BEGIN starts the gesture listener before wrapping.
-Wait briefly while holding still, then toss gently, catch, and pause at least
-half a second. Repeat three times, listening for one confirmation chirp after
-each settled catch. After the third chirp hold still for two more seconds.
-A rising melody with a repeated high note means ARMED; green stays on and a
-short tick sounds once per second. Yellow blinks while waiting for gestures.
+**Build H4 replaces three tosses with: turn once, turn back, pause.**
 
-Build H2 accepts a modest >1.2 g push sustained for 12 ms, followed within
-350 ms by 150–900 ms of flight below 0.45 g (900 ms is the elapsed ceiling).
-Brief interruptions up to 10 ms individually / 20 ms total are tolerated.
-Five milliseconds of support marks the catch; a soft catch need not exceed
-1.5 g. It must then settle for half a second. Three accepted tosses must
-finish within 15 seconds of the first accepted catch. A broken sequence
-resets with an error sound. There is no acceleration-only guarantee against
-every possible shake: validate these starting thresholds with the actual foam.
-The stable interval compares the vector with a fixed reference (0.20 g
-tolerance), not just 1 g magnitude, so rapidly changing orientation cannot
-satisfy the pause. The display shows HOLD STILL / TOSS NOW / IN AIR /
-CATCH WAIT, the measured flight milliseconds, and a rejection reason.
+HOME 2 > HAMMER HIT > MID BEGIN starts the listener. Finish wrapping and taping,
+then turn the whole package about one full revolution in any comfortable axis,
+turn it back the opposite way, and pause comfortably for about two seconds.
+One chirp marks each accepted turn; the rising melody and steady green mean
+ARMED. A tick once per second confirms that it remains armed. The display shows
+TURN ONCE / TURN BACK / EASY PAUSE and TURNS 0/2, 1/2, or 2/2.
+No toss, catch, precise orientation, or perfectly motionless hold is required.
+
+The on-demand gyro is polled at nominal 240 Hz alongside the unchanged
+accelerometer FIFO. The first turn accepts either sign on X, Y, Z, or a diagonal;
+the reverse must turn back along that measured direction. Each turn needs at
+least 270 degrees (a forgiving margin for the requested full turn), with a
+20 deg/s drift deadband and six seconds to finish each leg. Small reversing
+movements do not add together into a turn; continuing the same direction or
+rotating on an unrelated axis does not count as the reverse. The first turn
+also needs a reasonably consistent direction (net angle >=65% of path length).
+Partial/expired attempts reset quietly. A missing gyro stops the listener and
+reports an error, rather than allowing arming without sensor data.
+
+The final pause accepts hand movement up to 45 deg/s and acceleration magnitude
+between 0.65 and 1.4 g, without requiring a fixed orientation. It accumulates
+two seconds of supported, slow-motion readings. Brief bumps up to 350 ms pause
+that accumulation without erasing it. Longer movement restarts only the pause,
+retaining both turns; an eight-second pause-stage expiry resets the gesture.
+Fresh gyro and recent accelerometer readings are required. These are starting
+thresholds to test with the actual wrapped package, not a guarantee against
+every possible wrapping motion. Finish wrapping before deliberately arming.
 
 Once armed, an impact (>1.5 g) followed within 150 ms by at least 200 ms below
 0.45 g confirms a launch. Up to 5 ms per interruption and 10 ms total are
 allowed; the detector still requires 200 ms of actual near-weightlessness.
 Bumps without confirmed flight are ignored. Two minutes without confirmation
-plays a descending timeout cue and requires the three tosses again. The middle
+plays a descending timeout cue and requires the turn/back/pause gesture again. The middle
 button cancels before confirmation; buttons cannot interrupt a confirmed event.
 
 The existing 19,200-sample circular buffer retains 0.5 seconds before the launch
@@ -39,7 +49,7 @@ does not allocate more storage. V2 retains both XYZ streams (230,400 bytes);
 V1 uses low-g only. Existing EGG2/EGG1 downloads and recording protection work
 unchanged. Recording is RAM-only: download before power-off or reflashing.
 
-Build H3 prioritizes the recording: the completion screen shows RECORDING
+Build H4 retains H3's priority on the recording: the completion screen shows RECORDING
 COMPLETE, a single MAX vector-magnitude estimate in g over the entire recording,
 USB DL and MID OPT. There is no 16 g judgment or HIT/END classification. On V2, automatic
 low/high selection uses the existing 12 g/8 g axis hysteresis and frozen low-g
@@ -53,13 +63,19 @@ prevent flight recognition.
 
 USB bench commands `hammer` (idle HOME, no saved recording) and `hammer cancel`
 enter/cancel the same gesture workflow; neither bypasses arming. `status`
-identifies firmware `hammer-hit-3` and reports phase, toss count and maximum.
+identifies firmware `hammer-hit-4` and reports phase, turn count, reverse angle,
+pause progress, gyro state and maximum.
 ARM tests: `tests/hammer_trigger_test.c` exercises gesture rejection, flight
 qualification and timeout; `tools/make_hammer_capture_test.py` extracts the
 actual buffer/score functions to verify both board versions and wrapped rings.
 
 Build/program from this checkout using `PROGRAMMING_EGGBERT.md`. The artifact is
-`build/eggbert_bringup.elf`. Physical foam/toss/hammer trials remain necessary.
+`build/eggbert_bringup.elf`. Run `python tools/run_hammer_native_tests.py` with a native Clang/GCC compiler
+(`CC` may name its full path). This checks gesture directions, relaxed pause,
+ordinary handling rejection, recording windows, sensor/lifecycle failures,
+concurrent gyro/FIFO configuration, sounds, display scheduling and Beam.
+Physical wrapped-turn/hammer trials remain necessary; H4 has not been flashed
+or physically verified in this change.
 
 New to the code? Start with the [student code guide](STUDENT_GUIDE.md) for the
 project map, measurement units, recording walkthrough, and suggested exercises.
