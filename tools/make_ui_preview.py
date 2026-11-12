@@ -62,7 +62,8 @@ cases = [('hammer-ready', 'show_hammer();'),
  ('pendulum-ready', 'pendulum_state=PENDULUM_READY; show_pendulum();'),
  ('pendulum-wait', 'pendulum_state=PENDULUM_WAITING; show_pendulum();'),
  ('pendulum-swing', 'pendulum_state=PENDULUM_MEASURING; show_pendulum();'),
- ('pendulum-result', 'pendulum_state=PENDULUM_RESULT; show_pendulum();'),
+ ('pendulum-weak', 'pendulum_state=PENDULUM_WEAK; show_pendulum();'),
+ ('pendulum-result', 'pendulum_state=PENDULUM_RESULT; pendulum_detector.interval_count=6; show_pendulum();'),
  ('beam-ready', 'beam_state=BEAM_READY; show_beam();'),
  ('beam-wait', 'beam_state=BEAM_WAITING; show_beam();'),
  ('beam-listen', 'beam_state=BEAM_LISTENING; show_beam();'),
@@ -99,7 +100,7 @@ int ui_preview(void) {
     app_publish_sample(&preview_sample);
     friction_trial_count=5;
     for(unsigned i=0;i<5;++i) { friction_trial_angles[i]=25.5f+i; friction_trial_mu[i]=0.5f+i*0.1f; }
-    pendulum_period_count=4; pendulum_period_total_ms=4000;
+    pendulum_detector.interval_count=3; pendulum_detector.period_seconds=2.0f;
 ''' + '\n'.join(code for _, code in cases) + r'''
     return test_text_overflows ? 100+(int)test_text_overflows : 0;
 }

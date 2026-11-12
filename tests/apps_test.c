@@ -107,15 +107,25 @@ static void test_pendulum_controls(void) {
     open_app("pendulum"); app_button(1);
     assert(pendulum_state==PENDULUM_WAITING && app_sample_period_ms()==20);
     test_now+=2500;
-    for (unsigned i=0;i<350 && pendulum_state!=PENDULUM_RESULT;++i) {
+    // Physical two-second swing produces radial peaks every one second.
+    for (unsigned i=0;i<600 && pendulum_state!=PENDULUM_RESULT;++i) {
         test_now+=20;
-        sample_xyz((int16_t)(10000+4000*cosf(i*0.125663706f)),0,0);
+        sample_xyz((int16_t)(16384*(1.03f+0.09f*cosf(i*0.125663706f))),0,0);
     }
-    assert(pendulum_state==PENDULUM_RESULT && pendulum_period_count==4);
-    assert(pendulum_period_total_ms>=3960 && pendulum_period_total_ms<=4040);
+    assert(pendulum_state==PENDULUM_RESULT && pendulum_detector.interval_count==6);
+    assert(fabsf(pendulum_detector.period_seconds-2.0f)<0.03f);
+    float length_cm=980.665f*powf(pendulum_detector.period_seconds/6.2831853f,2);
+    assert(length_cm>96 && length_cm<103); // previously reported about 24.8 cm
     app_button(1); assert(pendulum_state==PENDULUM_WAITING);
     app_button(1); assert(pendulum_state==PENDULUM_READY);
-    app_button(0); assert(!app_current() && home_menu.selected==test_app_index("pendulum"));
+    app_button(1); test_now+=2500;
+    for(unsigned i=0;i<900 && pendulum_state!=PENDULUM_WEAK;i++) {
+        test_now+=20; sample_xyz(16384,0,0);
+    }
+    assert(pendulum_state==PENDULUM_WEAK);
+    app_button(1); assert(pendulum_state==PENDULUM_WAITING && !pendulum_detector.weak);
+    app_button(1); app_button(0);
+    assert(!app_current() && home_menu.selected==test_app_index("pendulum"));
 }
 
 static void test_capture_controls(void) {

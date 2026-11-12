@@ -600,7 +600,7 @@ static const char *capture_state_name(void) {
 }
 
 static void print_capture_status(void) {
-    printf("Firmware: eggbert-integrated-h5 (2026-11-11).\n");
+    printf("Firmware: eggbert-integrated-h6 (2026-11-12).\n");
     printf("IMU: %s, WHO_AM_I=0x%02X, stored high-g: %s, OLED: %s\n",
            lsm6dsv_model_name(), lsm6dsv_device_id(), capture_has_highg ? "yes" : "no",
            oled_ok ? "OK" : "NOT FOUND");

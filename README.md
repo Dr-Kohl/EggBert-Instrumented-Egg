@@ -1,5 +1,16 @@
 # EggBert RP2354A board bring-up
 
+## Latest firmware: H6 (November 12, 2026)
+
+Pendulum now measures a complete back-and-forth cycle. Two bottom crossings
+make one cycle; the previous modular app incorrectly treated a half-period as
+a full period, underestimating equivalent length by a factor of four. The app
+requires six consistent crossing intervals, rejects noisy/weak motion, and
+shows PER in seconds and LEN in centimeters. See [Pendulum measurement](PENDULUM_DETECTION.md)
+for the detector, validation and setup limitations. H6 retains H5 Hammer Hit
+metrics and the updated Home menu order. Existing boards need the new firmware
+programmed to receive this correction.
+
 ## Hammer Hit (integrated November 5, 2026)
 
 Contest setup, NASA research, example calculations and the next development

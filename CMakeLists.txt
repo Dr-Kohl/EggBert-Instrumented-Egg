@@ -82,6 +82,7 @@ add_executable(eggbert_bringup
     src/ssd1306.c
     src/sound.c
     src/settings.c
+    src/pendulum_detector.c
     src/maze.c
     src/app.c
     src/home.c

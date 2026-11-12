@@ -1,3 +1,11 @@
+## H6 Pendulum correction (November 12, 2026)
+
+The current build identifies as `eggbert-integrated-h6`. It fixes the Pendulum
+half-period error on both V1 and V2, includes signal confidence checks and shows
+units on the result. See PENDULUM_DETECTION.md. Rebuild the current master before
+programming. The H5 flash/trial notes below describe the prior firmware; H6
+still needs a physical stopwatch/known-length check after programming.
+
 ## Integrated update (November 11, 2026)
 
 Build from `master`. Hammer Hit's turn/back/pause behavior now uses Caleb's
@@ -21,7 +29,7 @@ Use this procedure for every JLCPCB Instrumented Egg / EggBert board. It is inte
 - Branch `master` combines Caleb's modular apps/settings with Hammer Hit and
   gyro arming, and includes the shared version 1/version 2 firmware.
   Build and flash from this checkout for Hammer Hit work. Firmware `status`
-  identifies this build as `eggbert-integrated-h5`.
+  identifies this build as `eggbert-integrated-h6`.
 - The earlier checkout at `C:\Users\Kohlc\OneDrive - Cedarville University\Documents\ChatGPT\EggBert Instrumented Egg`
   has unfinished local changes; preserve them. Confirm the checkout and changes
   with `git log -1` and `git status` before building or programming.
