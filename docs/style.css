@@ -18,3 +18,4 @@
 .analysis-controls[hidden],.hammer-summary[hidden]{display:none}
 
 .analysis-controls button[aria-pressed="true"]{background:#1769aa;color:white;border-color:#1769aa}
+#chartLegend[hidden]{display:none}
