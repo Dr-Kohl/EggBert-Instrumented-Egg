@@ -125,9 +125,21 @@ int hammer_capture_test(void) {
             return 80+version;
         if (capture_sample_at(0)->z!=2048 || capture_sample_at(1920)->z!=30000 ||
             capture_sample_at(1921)->z!=0 || capture_sample_at(19199)->z!=2048) return 90+version;
-        if (version==2 && (hammer_peak_mg!=31251u || hammer_limit_unknown)) return 100+version;
+        if (version==2 && (hammer_peak_mg!=31251u || hammer_limit_unknown || hammer_over20_samples!=2u*HAMMER_MS(10))) return 100+version;
         if (version==1 && (!hammer_limit_unknown || !capture_clipped)) return 110+version;
     }
+    // Full-record integration, strict threshold and vector magnitude (not any axis).
+    capture_has_highg=true; capture_count=5; capture_oldest_index=0;
+    memset(capture_samples,0,sizeof capture_samples);
+    memset(capture_high_samples,0,sizeof capture_high_samples);
+    capture_high_samples[0].z=1919; // just below 20 g
+    capture_high_samples[1].z=1920; // just above 20 g
+    capture_high_samples[3]=(lsm6dsv_accel_sample_t){1400,1400,0}; // >20 g vector
+    capture_high_samples[4].z=3000; // later bounce
+    summarize_hammer();
+    if (hammer_over20_samples!=3 || hammer_limit_unknown) return 130;
+    capture_count=0; summarize_hammer();
+    if (hammer_over20_samples || hammer_peak_mg) return 131;
     // Actual application lifecycle: preserve completed data on BEGIN, clean
     // up both sensors on startup failure/cancel, and reject missing gyro data.
     lifecycle=true; capture_complete=true; capture_count=123;

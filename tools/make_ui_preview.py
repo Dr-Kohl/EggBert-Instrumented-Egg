@@ -14,7 +14,7 @@ cases = [('hammer-ready', 'show_hammer();'),
  ('hammer-pause', 'hammer.phase=HAMMER_FINAL_SETTLE; hammer.turns=2; hammer.quiet_us=1500000; show_hammer(); for(unsigned i=0;i<8;++i) ssd1306_service_show();'),
  ('hammer-armed', 'hammer.phase=HAMMER_ARMED; show_hammer(); for(unsigned i=0;i<8;++i) ssd1306_service_show();'),
  ('hammer-recording', 'hammer.phase=HAMMER_RECORDING; show_hammer(); for(unsigned i=0;i<8;++i) ssd1306_service_show(); capture_active=false;'),
- ('hammer-done', 'capture_complete=true; trigger_detected=true; capture_count=19200; hammer_peak_mg=31251; show_hammer(); capture_complete=false;'),
+ ('hammer-done', 'capture_complete=true; trigger_detected=true; capture_count=19200; hammer_peak_mg=31251; capture_has_highg=true; hammer_over20_samples=48; show_hammer(); capture_complete=false;'),
 ('home', 'home_menu=(HomeMenu){0}; home_draw();'),
  ('home-2',
   'home_menu=(HomeMenu){0}; for(unsigned i=0;i<9;++i) home_menu_move(&home_menu,app_entry_count,true); '

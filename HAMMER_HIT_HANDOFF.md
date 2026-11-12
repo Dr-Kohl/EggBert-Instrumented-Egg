@@ -1,3 +1,25 @@
+## H5 update (November 11, 2026)
+
+The first five Home entries are HAMMER HIT, RECORD, ACCEL G, GYRO, MAZE.
+The reordered menu build passed and was programmed with Picotool flash
+verification OK on November 11, 2026. Completion shows MAX magnitude in g
+and OVER 20g in milliseconds across the entire five-second recording, including
+launch, landing, and bounces. Duration counts V2 high-g vector magnitudes strictly
+above 20 g, using nominal 10417 micro-g/count and sample rate (3840 Hz).
+Each qualifying sample contributes one sample period; displayed milliseconds are
+rounded to one decimal. Chart zoom and website changes are not involved.
+V1 shows N/A / NEEDS V2 because its low-g sensor cannot reliably measure this
+threshold. Clipping or capture errors show N/A with the existing warning.
+Maximum magnitude retains the existing automatic low/high sensor selection.
+Download or explicitly erase the one protected capture before another run.
+Serial status identifies eggbert-integrated-h5 and includes over20_samples.
+Build and all 11 ARM regression suites passed, as did the actual OLED layout
+check (no text overflows, Hammer Hit first). H5 was programmed November 11
+with Picotool flash verification OK on device 6A468A4BF7717CE3. Post-reboot
+COM47 status confirmed integrated-h5, LSM6DSV320X ID 0x73, OLED OK and
+paired FIFO integrity OK. Dr. Kohl tried H5 on the device and reported that
+the results display worked successfully.
+
 # Hammer Hit H4: turn, turn back, relaxed pause
 
 Integrated November 5, 2026 on `master`, retaining Caleb's app catalog, scrolling

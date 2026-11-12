@@ -118,6 +118,7 @@ static bool hammer_gyro_running;
 static uint32_t hammer_gyro_last_ms;
 static uint32_t hammer_armed_ms, hammer_tick_ms, hammer_display_ms;
 static uint32_t hammer_peak_mg;
+static uint32_t hammer_over20_samples;
 static bool hammer_limit_unknown;
 static bool capture_clipped;
 static uint32_t capture_rate = CAPTURE_RATE_HZ;
@@ -421,8 +422,15 @@ static void show_hammer(void) {
                      (unsigned long)((hammer_peak_mg%1000u)/100u));
             ssd1306_ui_text(2,64,line,true);
         } else ssd1306_ui_text(2,64,"NO DATA",true);
-        ssd1306_ui_text(2,82,hammer_limit_unknown ? "CLIPPED" : data_error ? "CHECK DATA" : "",true);
-        ssd1306_ui_text(2,100,"USB DL",true);
+        ssd1306_ui_text(2,78,"OVER 20g",true);
+        if (capture_has_highg && capture_count && !hammer_limit_unknown && !data_error) {
+            uint32_t tenths=(hammer_over20_samples*10000u+capture_rate/2u)/capture_rate;
+            snprintf(line,sizeof line,"%lu.%lums",(unsigned long)(tenths/10u),
+                     (unsigned long)(tenths%10u));
+        } else snprintf(line,sizeof line,"N/A");
+        ssd1306_ui_text(2,90,line,true);
+        ssd1306_ui_text(2,102,hammer_limit_unknown ? "CLIPPED" : data_error ? "CHECK DATA" :
+                       !capture_has_highg ? "NEEDS V2" : "",true);
         ssd1306_ui_text(2,116,"MID OPT",true);
     } else if (!capture_active) {
         ssd1306_ui_text(2,34,"TURN BACK",true);
@@ -592,7 +600,7 @@ static const char *capture_state_name(void) {
 }
 
 static void print_capture_status(void) {
-    printf("Firmware: eggbert-integrated-h4 (2026-11-05).\n");
+    printf("Firmware: eggbert-integrated-h5 (2026-11-11).\n");
     printf("IMU: %s, WHO_AM_I=0x%02X, stored high-g: %s, OLED: %s\n",
            lsm6dsv_model_name(), lsm6dsv_device_id(), capture_has_highg ? "yes" : "no",
            oled_ok ? "OK" : "NOT FOUND");
@@ -617,9 +625,9 @@ static void print_capture_status(void) {
                (unsigned long)trigger_index);
     printf(", %lu Hz, %lu counts/g\n", (unsigned long)capture_rate, (unsigned long)capture_scale);
     if (capture_is_hammer) {
-        printf("Hammer: phase=%u turns=%u active=%u confirmed=%u peak_mg=%lu peak_unknown=%u\n",
+        printf("Hammer: phase=%u turns=%u active=%u confirmed=%u peak_mg=%lu peak_unknown=%u over20_samples=%lu\n",
                (unsigned)hammer.phase,hammer.turns,capture_active,trigger_detected,
-               (unsigned long)hammer_peak_mg,hammer_limit_unknown);
+               (unsigned long)hammer_peak_mg,hammer_limit_unknown,(unsigned long)hammer_over20_samples);
         printf("Hammer gesture: reverse_deg=%u pause_ms=%lu gyro=%s\n",
                (unsigned)hammer.reverse_degrees,(unsigned long)(hammer.quiet_us/1000u),
                hammer_gyro_running ? "on" : "off");
@@ -832,6 +840,7 @@ static void start_capture(bool hammer_mode) {
     if (hammer_mode) {
         hammer_reset(&hammer);
         hammer_peak_mg=0;
+        hammer_over20_samples=0;
         hammer_limit_unknown=false;
     }
     capture_has_highg = capture_dual_failed = capture_diagnostic = capture_diagnostic_roll = false;
@@ -972,6 +981,7 @@ static uint32_t sample_peak_axis(const lsm6dsv_accel_sample_t *sample);
 
 static void summarize_hammer(void) {
     hammer_peak_mg=0;
+    hammer_over20_samples=0;
     hammer_limit_unknown=false;
     bool use_high=false;
     for (size_t i=0; i<capture_count; ++i) {
@@ -987,6 +997,11 @@ static void summarize_hammer(void) {
         bool clipped=use_high ? high_peak>=30413u : raw_peak>=32563u;
         if (clipped) hammer_limit_unknown=true;
         if (!capture_has_highg && clipped) capture_clipped=true;
+        // Whole-record duration, using V2's unclipped-range sensor directly.
+        // Compare squared micro-g units before rounding: strictly greater than 20 g.
+        if (capture_has_highg && magnitude_squared(high)*10417ull*10417ull >
+                                 20000000ull*20000000ull)
+            ++hammer_over20_samples;
         if (mg>hammer_peak_mg) hammer_peak_mg=mg;
     }
 }
