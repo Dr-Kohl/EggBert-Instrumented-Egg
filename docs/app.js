@@ -11,6 +11,7 @@ let viewStart = 0, viewSeconds = 0, drag, chartMode = "axes";
 let verticalScale = "auto", fittedDomains, fullDomains;
 let measuring = false, cursors = [null, null];
 let sensorSource = "low";
+let analysisMode = "normal", normalViewState;
 const PLOT = { left: 58, right: 18, top: 18, bottom: 32 };
 const $ = selector => document.querySelector(selector);
 const setStatus = text => { $("#connectionStatus").textContent = text; };
@@ -122,6 +123,10 @@ function detectFlight() {
 
 function displayCapture(bytes) {
   capture = parseEgg(bytes); captureBytes = bytes;
+  capture.hammer=EggHammer.analyze(capture);
+  analysisMode="normal"; normalViewState=undefined;
+  $("#analysisControls").hidden=false;
+  updateAnalysisView();
   sensorSource=capture.dual ? "auto" : "low"; $("#sensorSource").value=sensorSource;
   $("#sensorControls").hidden=!capture.dual;
   $("#sensorSource").disabled=!capture.dual;
@@ -166,11 +171,41 @@ function selectSensor(source) {
   drawAll();
 }
 
+function updateAnalysisView() {
+  const hammer=analysisMode==="hammer";
+  $("#normalViewButton").setAttribute("aria-pressed",String(!hammer));
+  $("#hammerViewButton").setAttribute("aria-pressed",String(hammer));
+  $("#hammerSummary").hidden=!hammer;
+  $("#sensorNote").hidden=hammer;
+  for(const id of ["#flightTime","#peakHeight"]) $(id).parentElement.hidden=hammer;
+  if(!capture) return;
+  $("#hammerPeak").textContent=`${capture.hammer.peakG.toFixed(1)} g`;
+  $("#hammerTime").textContent=capture.hammer.milliseconds===null ? "N/A" : `${capture.hammer.milliseconds.toFixed(1)} ms`;
+  $("#hammerWarning").textContent=capture.hammer.reason;
+}
+function setAnalysisView(mode) {
+  if(!capture || analysisMode===mode) return;
+  if(mode==="hammer") {
+    normalViewState={sensorSource,chartMode,verticalScale,fittedDomains};
+    analysisMode=mode;
+    selectSensor(capture.dual ? "high" : "low");
+    chartMode="magnitude";
+  } else {
+    analysisMode="normal";
+    selectSensor(normalViewState.sensorSource);
+    ({chartMode,verticalScale,fittedDomains}=normalViewState);
+    $("#verticalScale").value=verticalScale;
+  }
+  updateAnalysisView(); updateZoomControl(); drawAll();
+}
+
 function captureSeconds() { return capture ? capture.sampleCount / capture.sampleRate : 0; }
 function clamp(value, minimum, maximum) { return Math.max(minimum, Math.min(maximum, value)); }
 function updateZoomControl() {
   const ready = !!capture;
   ["#axesButton", "#magnitudeButton", "#showLabels", "#focusEventButton", "#verticalScale", "#fitVisibleButton", "#measureButton"].forEach(selector => { $(selector).disabled = !ready; });
+  $("#axesButton").disabled=!ready || analysisMode==="hammer";
+  $("#sensorSource").disabled=!ready || !capture.dual || analysisMode==="hammer";
   $("#axesButton").setAttribute("aria-pressed", String(chartMode === "axes"));
   $("#magnitudeButton").setAttribute("aria-pressed", String(chartMode === "magnitude"));
   $("#showLabels").setAttribute("aria-pressed", String(showLabels));
@@ -228,14 +263,16 @@ function fitVisibleData() {
 }
 function drawAll() {
   if (!capture) return;
+  const hammer=analysisMode==="hammer";
   const events = detectEvents(), domain = currentDomain();
+  if(hammer && verticalScale==="auto") domain[1]=Math.max(24,domain[1]);
   $("#scaleReadout").textContent = `${domain[0]} to ${domain[1]} g`;
   for (const option of $("#verticalScale").options) if (Number(option.value)>0) option.textContent = chartMode === "axes" ? `±${option.value} g` : `0–${option.value} g`;
   const axes = chartMode === "axes";
-  $("#chartTitle").textContent = (capture.dual ? (sensorSource==="auto" ? "Automatic - " : sensorSource==="high" ? "High-g · " : "Low-g · ") : "") + (axes ? "Acceleration" : "Acceleration magnitude");
+  $("#chartTitle").textContent = hammer ? (capture.dual ? "Hammer Hit - high-g magnitude" : "Hammer Hit - low-g magnitude (V1)") : (capture.dual ? (sensorSource==="auto" ? "Automatic - " : sensorSource==="high" ? "High-g · " : "Low-g · ") : "") + (axes ? "Acceleration" : "Acceleration magnitude");
   $("#chartLegend").hidden = !axes;
   $("#captureChart").setAttribute("aria-label", `${axes ? "Acceleration X, Y, and Z" : "Acceleration magnitude"} in g over time. Scroll to zoom. ${measuring ? "Click to place and drag measurement cursors." : "Drag to pan."}`);
-  drawPlot($("#captureChart"), axes ? [capture.x, capture.y, capture.z] : [capture.magnitude], domain, axes ? ["#c33", "#17834d", "#2463c5"] : ["#6240a0"], "g", events);
+  drawPlot($("#captureChart"), axes ? [capture.x, capture.y, capture.z] : [hammer ? capture.hammer.magnitude : capture.magnitude], domain, axes ? ["#c33", "#17834d", "#2463c5"] : ["#6240a0"], "g", events);
 }
 
 function detectEvents() {
@@ -277,6 +314,18 @@ function drawPlot(canvas, series, domain, colors, unit, events) {
   const visibleSamples = endIndex - startIndex + 1;
   const showSamples = visibleSamples <= plotWidth / 3;
   ctx.save(); ctx.beginPath(); ctx.rect(left, top, plotWidth, plotHeight); ctx.clip();
+  if(analysisMode==="hammer" && capture.dual) {
+    ctx.fillStyle="rgba(220,112,30,0.20)";
+    for(const [first,end] of capture.hammer.intervals) {
+      const x1=xAt(first), x2=xAt(end);
+      if(end<startIndex || first>endIndex) continue;
+      ctx.fillRect(x1,top,Math.max(1,x2-x1),plotHeight);
+    }
+    const thresholdY=top+plotHeight*(domain[1]-20)/(domain[1]-domain[0]);
+    ctx.strokeStyle="#b85b12"; ctx.lineWidth=2; ctx.setLineDash([7,4]);
+    ctx.beginPath(); ctx.moveTo(left,thresholdY); ctx.lineTo(width-right,thresholdY); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle="#b85b12"; ctx.fillText("20 g",width-right-42,thresholdY-5);
+  }
   series.forEach((values, index) => {
     ctx.strokeStyle = colors[index]; ctx.lineWidth = 1.15; ctx.beginPath();
     const indices = peakPreservingIndices(values, startIndex, endIndex, plotWidth);
@@ -552,6 +601,8 @@ $("#orientationRecenterButton").addEventListener("click",recenterOrientation);
 $("#fileInput").addEventListener("change", async event => { try { setError(""); displayCapture(new Uint8Array(await event.target.files[0].arrayBuffer())); setStatus("Capture file opened."); } catch (error) { setError(error.message); } event.target.value = ""; });
 $("#sampleSelect").addEventListener("change", async event => { const filename = event.target.value; if (!filename) return; try { setError(""); setStatus("Loading sample capture…"); const response = await fetch("sample-data/" + filename); if (!response.ok) throw new Error("Could not load sample capture (" + response.status + ")."); displayCapture(new Uint8Array(await response.arrayBuffer())); setStatus("Sample capture opened."); } catch (error) { setError(error.message); setStatus("Sample did not load."); } event.target.value = ""; });
 $("#showLabels").addEventListener("click", event => { showLabels = !showLabels; event.currentTarget.setAttribute("aria-pressed", String(showLabels)); drawAll(); });
+$("#normalViewButton").addEventListener("click",()=>setAnalysisView("normal"));
+$("#hammerViewButton").addEventListener("click",()=>setAnalysisView("hammer"));
 $("#axesButton").addEventListener("click", () => setChartMode("axes"));
 $("#magnitudeButton").addEventListener("click", () => setChartMode("magnitude"));
 $("#sensorSource").addEventListener("change", event=>selectSensor(event.target.value));

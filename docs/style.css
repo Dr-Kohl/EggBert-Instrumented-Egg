@@ -10,3 +10,11 @@
 .capture-warning[hidden],#sensorControls[hidden]{display:none}
 #sensorSource{max-width:11rem}
 .summary[hidden],#charts[hidden]{display:none}
+
+.analysis-controls{display:flex;gap:.5rem;flex-wrap:wrap;margin:.8rem 0}
+.hammer-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.6rem 1.5rem;border:1px solid #be691f;border-radius:.5rem;padding:1rem;margin:.7rem 0;background:color-mix(in srgb,Canvas 95%,#e48b32)}
+.hammer-summary span{display:block;font-size:.9rem}.hammer-summary strong{display:block;font-size:clamp(1.5rem,4vw,2rem);font-variant-numeric:tabular-nums}.hammer-summary p{grid-column:1/-1;margin:0;font-size:.85rem}
+#hammerWarning{color:#b00020}#hammerWarning:empty{display:none}
+.analysis-controls[hidden],.hammer-summary[hidden]{display:none}
+
+.analysis-controls button[aria-pressed="true"]{background:#1769aa;color:white;border-color:#1769aa}

@@ -7,7 +7,10 @@ and OVER 20g in milliseconds across the entire five-second recording, including
 launch, landing, and bounces. Duration counts V2 high-g vector magnitudes strictly
 above 20 g, using nominal 10417 micro-g/count and sample rate (3840 Hz).
 Each qualifying sample contributes one sample period; displayed milliseconds are
-rounded to one decimal. Chart zoom and website changes are not involved.
+rounded to one decimal. Chart zoom does not affect the totals. The website now has Normal view and
+Hammer Hit analysis buttons; the latter shows the two metrics, a 20 g line,
+and shaded high-g intervals across the full recording. V2 uses raw high-g
+samples for duration and automatic low/high magnitude for MAX, matching H5.
 V1 shows N/A / NEEDS V2 because its low-g sensor cannot reliably measure this
 threshold. Clipping or capture errors show N/A with the existing warning.
 Maximum magnitude retains the existing automatic low/high sensor selection.

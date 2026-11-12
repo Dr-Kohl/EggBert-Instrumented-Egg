@@ -8,12 +8,13 @@ const fixture=new Uint8Array(fs.readFileSync(path.join(__dirname,'../build/egg2-
 function viewer() {
   const elements=new Map();
   const ctx=new Proxy({measureText:()=>({width:50})},{get:(o,k)=>k in o ? o[k] : ()=>{}});
-  const element=()=>({disabled:false,hidden:false,textContent:'',value:'auto',width:1000,height:340,style:{},
+  const element=()=>({disabled:false,hidden:false,textContent:'',value:'auto',width:1000,height:340,style:{},parentElement:{hidden:false},
     options:['auto','2','4','8','16','32','64','128','256','320','fit'].map(value=>({value})),
     classList:{toggle(){}},addEventListener(){},setAttribute(){},getContext:()=>ctx});
   const context=vm.createContext({console,Uint8Array,Int16Array,Float32Array,DataView,TextEncoder,TextDecoder,
     Blob,setTimeout,clearTimeout,performance,window:{addEventListener(){}},navigator:{},
     document:{querySelector(selector){if(!elements.has(selector))elements.set(selector,element());return elements.get(selector);}}});
+  vm.runInContext(fs.readFileSync(path.join(__dirname,"../docs/hammer.js"),"utf8"),context);
   vm.runInContext(app,context);
   return {context,elements,run:code=>vm.runInContext(code,context)};
 }
