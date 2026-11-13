@@ -22,7 +22,7 @@ unsigned test_flash_erases, test_flash_programs, test_irq_depth, test_sound_stop
 size_t test_flash_program_limit=FLASH_PAGE_SIZE;
 bool test_screen_ok=true, sound_enabled=true;
 bool test_usb_connected, test_idle_ok=true, test_wake_ok=true;
-unsigned test_idle_starts, test_idle_ends;
+unsigned test_idle_starts, test_idle_ends, test_led_mask;
 uint8_t test_contrast=0x7f;
 static bool expect_contrast;
 static i2c_inst_t i2c_instance;
@@ -96,3 +96,5 @@ int16_t calibration_correct_axis(int16_t raw,unsigned axis,uint32_t scale) {
 bool stdio_usb_connected(void) { return test_usb_connected; }
 bool lsm6dsv_idle_start(void) { ++test_idle_starts; return test_idle_ok; }
 bool lsm6dsv_idle_end(void) { ++test_idle_ends; return test_wake_ok; }
+
+int64_t absolute_time_diff_us(absolute_time_t from, absolute_time_t to) { return ((int64_t)to-(int64_t)from)*1000; }

@@ -9,3 +9,5 @@ absolute_time_t make_timeout_time_ms(uint32_t ms);
 bool time_reached(absolute_time_t time);
 uint64_t time_us_64(void);
 void sleep_ms(unsigned ms);
+
+int64_t absolute_time_diff_us(absolute_time_t from, absolute_time_t to);

@@ -1,8 +1,9 @@
 ## Stage-one standby test build (November 13, 2026)
 
-The current local build identifies as `eggbert-integrated-h7-idle1` and uses a
+The current local build identifies as `eggbert-integrated-h7-idle2` and uses a
 60-second timeout. All 14 ARM regression suites and the production build pass.
-Hardware trials are pending. Follow LOW_POWER_DESIGN.md for button wake,
+The initial standby/button-wake behavior was checked on V2. The new 100 ms
+red recording reminder every five seconds needs a physical check after flashing. Follow LOW_POWER_DESIGN.md for button wake,
 recording-retention checks and the planned processor-sleep/motion-wake stage.
 Close serial monitors when testing the inactivity timeout: open CDC sessions
 inhibit standby. Rebuild before programming using the procedure below.

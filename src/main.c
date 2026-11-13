@@ -132,6 +132,9 @@ static absolute_time_t next_capture_poll;
 static bool oled_ok;
 static idle_power_t idle_power;
 static bool idle_standby, idle_wake_buttons;
+static uint32_t idle_started_ms;
+#define IDLE_RECORD_LED_PERIOD_MS 5000u
+#define IDLE_RECORD_LED_PULSE_MS   100u
 static uint16_t power_out_millivolts;
 static bool usb_power_present;
 static int16_t live_accel_x;
@@ -552,6 +555,7 @@ static void show_ui(void) {
 }
 
 // Stage one is cooperative standby. RAM, the capture buffers, and USB stay on.
+static void update_status_leds(bool imu_ok);
 static bool wake_idle(void) {
     if (!idle_standby) return true;
     if (!lsm6dsv_idle_end() || (oled_ok && !ssd1306_set_power(true))) {
@@ -562,6 +566,7 @@ static bool wake_idle(void) {
     ui_set_display_available(oled_ok);
     idle_power_init(&idle_power, to_ms_since_boot(get_absolute_time()));
     level_filter_initialized = false;
+    update_status_leds(lsm6dsv_model() != LSM6DSV_MODEL_UNKNOWN);
     show_ui();
     printf("Power: awake (idle timeout %lu ms).\n", (unsigned long)IDLE_TIMEOUT_MS);
     return true;
@@ -591,6 +596,8 @@ static void service_idle_power(bool buttons_down) {
         return;
     }
     idle_standby = true;
+    idle_started_ms = to_ms_since_boot(get_absolute_time());
+    update_status_leds(true);
     ui_set_display_available(false);
     printf("Power: standby; press any button to wake. Recording RAM retained.\n");
 }
@@ -648,7 +655,7 @@ static const char *capture_state_name(void) {
 }
 
 static void print_capture_status(void) {
-    printf("Firmware: eggbert-integrated-h7-idle1 (2026-11-13).\n");
+    printf("Firmware: eggbert-integrated-h7-idle2 (2026-11-13).\n");
     printf("Power: %s; idle timeout %lu ms; stage 1, button wake.\n",
            idle_standby ? "STANDBY" : "awake", (unsigned long)IDLE_TIMEOUT_MS);
     printf("IMU: %s, WHO_AM_I=0x%02X, stored high-g: %s, OLED: %s\n",
@@ -1157,6 +1164,13 @@ static void exit_gentle_catch(void) {
 }
 
 static void update_status_leds(bool imu_ok) {
+    if (idle_standby) {
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - idle_started_ms;
+        bool reminder = capture_complete && capture_count > 0 &&
+                        elapsed % IDLE_RECORD_LED_PERIOD_MS < IDLE_RECORD_LED_PULSE_MS;
+        leds(reminder ? 0x04u : 0u);
+        return;
+    }
     if (!imu_ok) { leds(0x04u); return; }
     if (capture_is_hammer && capture_active && ui_state == UI_HAMMER_HIT) {
         if (hammer.phase == HAMMER_RECORDING) leds(0x03u);
@@ -1800,7 +1814,7 @@ int main(void) {
                 if (new_presses & (1u << i)) handle_button_press(i);
         }
         if (!pressed) idle_wake_buttons=false;
-        if (!idle_standby) update_status_leds(imu_ok);
+        update_status_leds(imu_ok);
         if (!idle_standby && imu_ok && !capture_active && !orientation_fused && (!app_current() || !app_current()->owns_imu) && absolute_time_diff_us(get_absolute_time(), next_imu_report) <= 0) {
             int16_t x, y, z;
             if (lsm6dsv_read_accel(&x, &y, &z)) {

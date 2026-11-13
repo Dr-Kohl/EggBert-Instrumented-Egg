@@ -11,6 +11,7 @@ int main(void) {
     fresh_home();
     // Byte-for-byte protected data and pending calibration survive standby/wake.
     capture_complete=true; capture_count=123; capture_has_highg=true;
+    capture_state=CAPTURE_COMPLETE;
     capture_metadata.calibration_generation=27;
     memset(capture_samples,0x35,sizeof capture_samples);
     memset(capture_high_samples,0x57,sizeof capture_high_samples);
@@ -18,8 +19,24 @@ int main(void) {
     test_now+=IDLE_TIMEOUT_MS-1; service_idle_power(false); assert(!idle_standby);
     test_now++; service_idle_power(false); assert(idle_standby && !ui_display_available());
     unsigned frames=test_frames;
+    assert(test_led_mask==4); // first reminder pulse begins at standby entry
+    test_now+=99; update_status_leds(true); assert(test_led_mask==4);
+    test_now++; update_status_leds(true); assert(test_led_mask==0);
+    test_now+=4899; update_status_leds(true); assert(test_led_mask==0);
+    test_now++; update_status_leds(true); assert(test_led_mask==4);
+    test_now+=100; update_status_leds(true); assert(test_led_mask==0);
+    assert(test_frames==frames); // blinking never wakes or redraws the OLED
+    capture_complete=false; update_status_leds(true); assert(test_led_mask==0);
+    capture_complete=true; capture_count=0;
+    test_now=idle_started_ms+5000; update_status_leds(true); assert(test_led_mask==0);
+    capture_count=123;
+    // Unsigned elapsed timing also works across millisecond-clock rollover.
+    idle_started_ms=UINT32_MAX-49u; test_now=25;
+    update_status_leds(true); assert(test_led_mask==4);
+    test_now=50; update_status_leds(true); assert(test_led_mask==0);
     show_ui(); assert(test_frames==frames);
     handle_button_press(1); assert(!idle_standby && !app_current());
+    assert(test_led_mask==4); // awake capture-complete indication is solid red
     // Other buttons pressed in the same waking chord cannot open/erase/arm.
     handle_button_press(0); handle_button_press(1); assert(!app_current());
     assert(capture_complete && capture_count==123 && capture_has_highg);
@@ -49,6 +66,10 @@ int main(void) {
     test_wake_ok=false; handle_button_press(1); assert(idle_standby);
     test_wake_ok=true; handle_button_press(1); assert(!idle_standby);
     fresh_home(); capture_complete=false;
+    test_now+=IDLE_TIMEOUT_MS; service_idle_power(false);
+    assert(idle_standby && test_led_mask==0);
+    test_now+=5000; update_status_leds(true); assert(test_led_mask==0);
+    assert(wake_idle());
     assert(app_open(test_app_index("acceleration")));
     test_now+=IDLE_TIMEOUT_MS; service_idle_power(false); assert(idle_standby);
     assert(wake_idle() && app_current()==&acceleration_app);

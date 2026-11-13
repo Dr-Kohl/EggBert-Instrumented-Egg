@@ -1,9 +1,11 @@
 # EggBert RP2354A board bring-up
 
-## Stage-one standby test build: H7-idle1 (November 13, 2026)
+## Stage-one standby test build: H7-idle2 (November 13, 2026)
 
 The local build adds a 60-second inactivity timer, OLED/sensor standby and
-button wake, retaining completed recordings. Active experiments and open USB
+button wake, retaining completed recordings. A saved recording gets a brief
+red reminder pulse every five seconds during standby; otherwise status LEDs
+are off. Active experiments and open USB
 serial sessions stay awake. The first wake press only wakes the device.
 Processor sleep and shake-to-wake are the next stage. See
 [low-power design and physical test procedure](LOW_POWER_DESIGN.md).

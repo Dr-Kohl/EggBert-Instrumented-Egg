@@ -24,3 +24,5 @@ extern uint8_t test_contrast;
 
 extern bool test_usb_connected, test_idle_ok, test_wake_ok;
 extern unsigned test_idle_starts, test_idle_ends;
+
+extern unsigned test_led_mask;
