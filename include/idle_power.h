@@ -2,9 +2,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// One-minute bench setting. Change to 15u * 60u * 1000u after validation.
+// Five-minute inactivity timeout, selected after sleep/wake validation.
 #ifndef IDLE_TIMEOUT_MS
-#define IDLE_TIMEOUT_MS 60000u
+#define IDLE_TIMEOUT_MS (5u * 60u * 1000u)
 #endif
 
 typedef struct {

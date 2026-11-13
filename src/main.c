@@ -676,7 +676,7 @@ static const char *capture_state_name(void) {
 }
 
 static void print_capture_status(void) {
-    printf("Firmware: eggbert-integrated-h8-sleep (2026-11-13).\n");
+    printf("Firmware: eggbert-integrated-h8-sleep5 (2026-11-13).\n");
     printf("Power: %s; idle timeout %lu ms; stage 2, processor sleep, button/motion/USB wake.\n",
            idle_standby ? "STANDBY" : "awake", (unsigned long)IDLE_TIMEOUT_MS);
     printf("Sleep entries: %lu; last wake mask: %u (button=1, motion=2, USB=4).\n",

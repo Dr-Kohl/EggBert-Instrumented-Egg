@@ -3,6 +3,21 @@
 Agreed November 13, 2026. Shared firmware for V1 (LSM6DSV) and V2
 (LSM6DSV320X). This work is intentionally staged.
 
+## Current timeout: five minutes (H8-sleep5)
+
+Dr. Kohl confirmed shake wake and recording retention on V2, then selected
+five minutes of inactivity for normal use. IDLE_TIMEOUT_MS is now
+5u * 60u * 1000u (300000 ms) in include/idle_power.h. Processor sleep, wake
+behavior, recording retention and reminder LEDs are unchanged. The one-minute
+and proposed fifteen-minute settings below describe the earlier test plan.
+For current physical checks, wait five minutes with the serial monitor closed.
+
+H8-sleep5 built and passed all 15 ARM regression suites. Programmed and
+flash-verified on V2 serial 612C09B133DDB22A; post-boot serial status confirmed
+300000 ms timeout, OLED OK and live acceleration. Before reboot, the completed
+19200-sample dual recording was saved under recordings/2026-11-13-before-five-minute-sleep
+as .egg and .egd2; length/CRC and identical dual raw streams were validated.
+
 ## Stage one: H7-idle2
 
 H7-idle1 and H7-idle2 were programmed and flash-verified on a V2 board. Dr. Kohl
