@@ -1,16 +1,23 @@
 # EggBert RP2354A board bring-up
 
-## Stage-one standby test build: H7-idle2 (November 13, 2026)
+## Latest firmware: H8-sleep5 (November 13, 2026)
 
-The local build adds a 60-second inactivity timer, OLED/sensor standby and
-button wake, retaining completed recordings. A saved recording gets a brief
-red reminder pulse every five seconds during standby; otherwise status LEDs
-are off. Active experiments and open USB
-serial sessions stay awake. The first wake press only wakes the device.
-Processor sleep and shake-to-wake are the next stage. See
+[Download the flash-verified firmware and checksum](https://github.com/Dr-Kohl/EggBert-Instrumented-Egg/releases/tag/h8-sleep5).
+Program `eggbert_bringup.elf` using [the programming guide](PROGRAMMING_EGGBERT.md).
+Serial `status` must identify `eggbert-integrated-h8-sleep5` and report
+`idle timeout 300000 ms` (five minutes).
+
+After five minutes of inactivity, the display turns off and the processor sleeps
+with recordings retained in RAM. Shake, press any button, or connect a USB serial
+host to wake the same screen. The first button press only wakes the device.
+A saved recording gets a brief red reminder pulse every five seconds during
+standby; otherwise status LEDs are off. Active experiments and open USB serial
+sessions stay awake. All 15 ARM regression suites passed; V2 sleep, shake wake
+and recording retention were physically confirmed. Shared V1/V2 sensor paths
+are regression-tested; V1 physical sleep/wake testing remains pending. See
 [low-power design and physical test procedure](LOW_POWER_DESIGN.md).
 
-## Latest firmware: H6 (November 12, 2026)
+## Included Pendulum correction: H6 (November 12, 2026)
 
 Pendulum now measures a complete back-and-forth cycle. Two bottom crossings
 make one cycle; the previous modular app incorrectly treated a half-period as

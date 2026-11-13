@@ -1,16 +1,25 @@
-## Stage-one standby test build (November 13, 2026)
+## Current firmware: H8-sleep5 (November 13, 2026)
 
-The current local build identifies as `eggbert-integrated-h7-idle2` and uses a
-60-second timeout. All 14 ARM regression suites and the production build pass.
-The initial standby/button-wake behavior was checked on V2. The new 100 ms
-red recording reminder every five seconds needs a physical check after flashing. Follow LOW_POWER_DESIGN.md for button wake,
-recording-retention checks and the planned processor-sleep/motion-wake stage.
-Close serial monitors when testing the inactivity timeout: open CDC sessions
-inhibit standby. Rebuild before programming using the procedure below.
+For batch programming, download `eggbert_bringup.elf` and `SHA256SUMS.txt` from
+[release h8-sleep5](https://github.com/Dr-Kohl/EggBert-Instrumented-Egg/releases/tag/h8-sleep5).
+This is the exact ELF programmed and flash-verified on Dr. Kohl's V2 board.
+Keep that same file for every board; plug in one EggBert at a time and use the
+Picotool procedure below, substituting the downloaded ELF's path for
+`build\eggbert_bringup.elf`. No local rebuild is needed when using the release ELF.
+Compare `Get-FileHash <downloaded-elf-path> -Algorithm SHA256` with SHA256SUMS.txt.
+
+After programming, serial `status` must identify `eggbert-integrated-h8-sleep5`
+and report `idle timeout 300000 ms`. The device sleeps after five minutes of
+inactivity; shake or press any button to wake. The first press only wakes.
+Recordings survive sleep; flashing or power-off clears them, so download first.
+Close serial monitors when testing the timeout: open CDC sessions inhibit sleep.
+All 15 ARM regression suites passed. V2 shake wake and recording retention were
+physically confirmed; V1 physical sleep/wake testing remains pending.
+See LOW_POWER_DESIGN.md for details.
 
 ## H6 Pendulum correction (November 12, 2026)
 
-The current build identifies as `eggbert-integrated-h6`. It fixes the Pendulum
+The earlier H6 build identifies as `eggbert-integrated-h6`. It fixes the Pendulum
 half-period error on both V1 and V2, includes signal confidence checks and shows
 units on the result. See PENDULUM_DETECTION.md. Rebuild the current master before
 programming. The H5 flash/trial notes below describe the prior firmware; H6
@@ -39,7 +48,7 @@ Use this procedure for every JLCPCB Instrumented Egg / EggBert board. It is inte
 - Branch `master` combines Caleb's modular apps/settings with Hammer Hit and
   gyro arming, and includes the shared version 1/version 2 firmware.
   Build and flash from this checkout for Hammer Hit work. Firmware `status`
-  identifies this build as `eggbert-integrated-h6`.
+  identifies the current build as `eggbert-integrated-h8-sleep5`.
 - The earlier checkout at `C:\Users\Kohlc\OneDrive - Cedarville University\Documents\ChatGPT\EggBert Instrumented Egg`
   has unfinished local changes; preserve them. Confirm the checkout and changes
   with `git log -1` and `git status` before building or programming.
