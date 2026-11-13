@@ -222,5 +222,6 @@ static void maze_handle_button(unsigned button) {
     }
 }
 
-const App maze_app = {.enter=maze_new_game,.draw=show_maze,.button=maze_handle_button,
+static bool maze_can_idle(void) { return maze_phase != MAZE_PLAYING && maze_phase != MAZE_CENTERING; }
+const App maze_app = {.can_idle=maze_can_idle,.enter=maze_new_game,.draw=show_maze,.button=maze_handle_button,
     .tick=service_maze,.owns_imu=true,.fast_tick=true};

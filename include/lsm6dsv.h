@@ -24,6 +24,11 @@ const char *lsm6dsv_model_name(void);
 // Initializes four-wire SPI, identifies 0x70/0x73, resets and verifies live mode.
 bool lsm6dsv_init(void);
 
+// Stage-one standby: low-g +/-2 g at 7.5 Hz low-power two-average mode;
+// gyro/high-g off. Refuses FIFO/fusion sessions. No reset or RAM data changes.
+bool lsm6dsv_idle_start(void);
+bool lsm6dsv_idle_end(void);
+
 // Reads raw signed acceleration counts. At the configured +/-2 g scale: 0.061 mg/LSB.
 bool lsm6dsv_read_accel(int16_t *x, int16_t *y, int16_t *z);
 

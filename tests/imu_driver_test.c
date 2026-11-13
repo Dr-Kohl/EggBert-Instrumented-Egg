@@ -108,6 +108,22 @@ int imu_driver_test(void) {
         CHECK(highg_writes == model);
         CHECK(regs[0][0x10] == 6 && regs[0][0x17] == 0 && regs[0][0x12] == 0x44);
         CHECK(sleeps >= 60);
+        CHECK(lsm6dsv_idle_start());
+        CHECK(regs[0][0x10]==0x42 && regs[0][0x11]==0 && regs[0][0x17]==0);
+        CHECK(!lsm6dsv_gyro_start() && !lsm6dsv_fifo_start() && !lsm6dsv_orientation_start());
+        unsigned idle_writes=writes;
+        CHECK(lsm6dsv_idle_start() && writes==idle_writes);
+        CHECK(lsm6dsv_idle_end() && regs[0][0x10]==6 && regs[0][0x11]==0);
+        // Failed entry must restore normal live mode; failed wake may be retried.
+        reject_config=true;
+        CHECK(!lsm6dsv_idle_start());
+        reject_config=false;
+        CHECK(lsm6dsv_idle_end() && regs[0][0x10]==6);
+        CHECK(lsm6dsv_idle_start()); reject_config=true;
+        CHECK(!lsm6dsv_idle_end()); reject_config=false;
+        CHECK(lsm6dsv_idle_end() && regs[0][0x10]==6);
+        CHECK(model || highg_writes==0); // never touch V2-only address on V1
+
         regs[0][0x28] = 0; regs[0][0x29] = 0x40; // +1g at +/-2g
         regs[0][0x2a] = 0; regs[0][0x2b] = 0xc0; // -1g
         int16_t x, y, z;
@@ -123,6 +139,7 @@ int imu_driver_test(void) {
         lsm6dsv_gyro_stop();
         CHECK(regs[0][0x11] == 0);
         CHECK(lsm6dsv_fifo_start());
+        CHECK(!lsm6dsv_idle_start());
         CHECK(regs[0][0x10] == 11 && regs[0][0x17] == 3 && regs[0][9] == 11);
         lsm6dsv_accel_sample_t sample;
         bool overrun = false;
@@ -235,7 +252,7 @@ int imu_driver_test(void) {
         CHECK(!lsm6dsv_init() && lsm6dsv_device_id() == invalid[i]);
         CHECK(lsm6dsv_model() == LSM6DSV_MODEL_UNKNOWN && writes == 0);
         CHECK(!lsm6dsv_fifo_start() && !lsm6dsv_beam_fifo_start());
-        CHECK(!lsm6dsv_gyro_start() && !lsm6dsv_orientation_start());
+        CHECK(!lsm6dsv_gyro_start() && !lsm6dsv_orientation_start() && !lsm6dsv_idle_start());
         lsm6dsv_fifo_stop(); lsm6dsv_gyro_stop();
         CHECK(writes == 0);
     }

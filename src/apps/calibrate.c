@@ -187,5 +187,6 @@ static void calibrate_sample(const AppSample *sample) {
     calibration_process_raw(sample->raw[0],sample->raw[1],sample->raw[2]); show_calibration();
 }
 static uint32_t calibrate_period(void) { return calibration_collecting || calibration_armed ? 50 : 250; }
-const App calibrate_app = {.enter=calibration_reset_wizard,.leave=calibration_reset_wizard,
+static bool calibrate_can_idle(void) { return !calibration_collecting && !calibration_armed; }
+const App calibrate_app = {.can_idle=calibrate_can_idle,.enter=calibration_reset_wizard,.leave=calibration_reset_wizard,
     .draw=show_calibration,.button=calibrate_button,.sample=calibrate_sample,.sample_period_ms=calibrate_period};

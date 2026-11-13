@@ -100,5 +100,6 @@ static void pendulum_button(unsigned button) {
 static void pendulum_enter(void) { pendulum_state=PENDULUM_READY; }
 static void pendulum_sample(const AppSample *sample) { (void)sample; pendulum_process_sample(); show_pendulum(); }
 static uint32_t pendulum_period(void) { return pendulum_state!=PENDULUM_READY ? 20 : 250; }
-const App pendulum_app = {.enter=pendulum_enter,.draw=show_pendulum,.button=pendulum_button,
+static bool pendulum_can_idle(void) { return pendulum_state != PENDULUM_WAITING && pendulum_state != PENDULUM_MEASURING; }
+const App pendulum_app = {.can_idle=pendulum_can_idle,.enter=pendulum_enter,.draw=show_pendulum,.button=pendulum_button,
     .sample=pendulum_sample,.sample_period_ms=pendulum_period};

@@ -26,6 +26,7 @@
 #include "ui.h"
 #include "calibration.h"
 #include "hammer_trigger.h"
+#include "idle_power.h"
 #include "pico/stdlib.h"
 #include "pico/stdio_usb.h"
 #include "ssd1306.h"
@@ -129,6 +130,8 @@ static beam_trigger_t beam_trigger;
 static uint32_t beam_display_ms, capture_last_sample_ms;
 static absolute_time_t next_capture_poll;
 static bool oled_ok;
+static idle_power_t idle_power;
+static bool idle_standby, idle_wake_buttons;
 static uint16_t power_out_millivolts;
 static bool usb_power_present;
 static int16_t live_accel_x;
@@ -544,10 +547,55 @@ void capture_app_draw(void) {
 }
 
 static void show_ui(void) {
+    if (idle_standby) return;
     if (app_current()) app_draw(); else capture_app_draw();
 }
 
-bool app_host_can_open(void) { return !capture_active && !orientation_fused; }
+// Stage one is cooperative standby. RAM, the capture buffers, and USB stay on.
+static bool wake_idle(void) {
+    if (!idle_standby) return true;
+    if (!lsm6dsv_idle_end() || (oled_ok && !ssd1306_set_power(true))) {
+        printf("ERROR: standby wake failed; press a button to retry.\n");
+        return false;
+    }
+    idle_standby = false;
+    ui_set_display_available(oled_ok);
+    idle_power_init(&idle_power, to_ms_since_boot(get_absolute_time()));
+    level_filter_initialized = false;
+    show_ui();
+    printf("Power: awake (idle timeout %lu ms).\n", (unsigned long)IDLE_TIMEOUT_MS);
+    return true;
+}
+
+bool capture_app_can_idle(void) {
+    return !capture_active && (ui_state != UI_BEAM ||
+                              beam_state == BEAM_READY || beam_state == BEAM_RESULT);
+}
+
+static void service_idle_power(bool buttons_down) {
+    if (idle_standby) return;
+    uint32_t now = to_ms_since_boot(get_absolute_time());
+    bool busy = buttons_down || capture_active || orientation_stream || orientation_fused ||
+                stdio_usb_connected() || !app_can_idle();
+    if (!idle_power_due(&idle_power, now, busy)) return;
+    sound_stop();
+    if (!lsm6dsv_idle_start()) {
+        idle_power_activity(&idle_power, now);
+        printf("ERROR: sensor standby failed; staying awake.\n");
+        return;
+    }
+    if (oled_ok && !ssd1306_set_power(false)) {
+        lsm6dsv_idle_end();
+        idle_power_activity(&idle_power, now);
+        printf("ERROR: display standby failed; staying awake.\n");
+        return;
+    }
+    idle_standby = true;
+    ui_set_display_available(false);
+    printf("Power: standby; press any button to wake. Recording RAM retained.\n");
+}
+
+bool app_host_can_open(void) { return !idle_standby && !capture_active && !orientation_fused; }
 void app_host_prepare(void) { ui_state=UI_APP; ui_selection=0; }
 void app_host_home(void) { ui_state=UI_HOME; ui_selection=0; }
 
@@ -600,7 +648,9 @@ static const char *capture_state_name(void) {
 }
 
 static void print_capture_status(void) {
-    printf("Firmware: eggbert-integrated-h6 (2026-11-12).\n");
+    printf("Firmware: eggbert-integrated-h7-idle1 (2026-11-13).\n");
+    printf("Power: %s; idle timeout %lu ms; stage 1, button wake.\n",
+           idle_standby ? "STANDBY" : "awake", (unsigned long)IDLE_TIMEOUT_MS);
     printf("IMU: %s, WHO_AM_I=0x%02X, stored high-g: %s, OLED: %s\n",
            lsm6dsv_model_name(), lsm6dsv_device_id(), capture_has_highg ? "yes" : "no",
            oled_ok ? "OK" : "NOT FOUND");
@@ -1538,6 +1588,8 @@ static void handle_serial_command(void) {
     static size_t length;
     int character;
     while ((character = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
+        idle_power_activity(&idle_power, to_ms_since_boot(get_absolute_time()));
+        if (!wake_idle()) { length=0; continue; }
         if (character == '\r' || character == '\n') {
             if (length == 0) continue;
             command[length] = '\0';
@@ -1656,6 +1708,9 @@ void capture_app_button(unsigned button) {
 }
 
 static void handle_button_press(unsigned button) {
+    idle_power_activity(&idle_power, to_ms_since_boot(get_absolute_time()));
+    if (idle_standby) { wake_idle(); idle_wake_buttons=true; return; }
+    if (idle_wake_buttons) return; // consume the entire waking press/chord
     if (orientation_fused) { stop_orientation(); printf("ORIENTATION STOPPED: device menu\n"); }
     if (capture_active) {
         if (ui_state == UI_HAMMER_HIT && button == 1 && hammer.phase != HAMMER_RECORDING) cancel_hammer();
@@ -1715,17 +1770,20 @@ int main(void) {
     absolute_time_t buttons_changed_at = get_absolute_time();
     absolute_time_t next_imu_report = make_timeout_time_ms(250);
     absolute_time_t next_power_sample = make_timeout_time_ms(500);
+    idle_power_init(&idle_power, to_ms_since_boot(get_absolute_time()));
     while (true) {
         handle_serial_command();
-        service_capture();
-        service_hammer();
-        if (oled_ok) ssd1306_service_show();
-        service_orientation();
-        if (!capture_active && !orientation_fused) app_tick();
-        if (!capture_active && absolute_time_diff_us(get_absolute_time(), next_power_sample) <= 0) {
-            sample_power();
-            next_power_sample = make_timeout_time_ms(500);
-        }
+        if (!idle_standby) {
+            service_capture();
+            service_hammer();
+            if (oled_ok) ssd1306_service_show();
+            service_orientation();
+            if (!capture_active && !orientation_fused) app_tick();
+            if (!capture_active && absolute_time_diff_us(get_absolute_time(), next_power_sample) <= 0) {
+                sample_power();
+                next_power_sample = make_timeout_time_ms(500);
+            }
+        } // ordinary services are suspended during standby
         unsigned pressed = 0;
         for (unsigned i = 0; i < 3; ++i)
             if (!gpio_get(BUTTONS[i])) pressed |= 1u << i;
@@ -1741,14 +1799,17 @@ int main(void) {
             for (unsigned i = 0; i < 3; ++i)
                 if (new_presses & (1u << i)) handle_button_press(i);
         }
-        update_status_leds(imu_ok);
-        if (imu_ok && !capture_active && !orientation_fused && (!app_current() || !app_current()->owns_imu) && absolute_time_diff_us(get_absolute_time(), next_imu_report) <= 0) {
+        if (!pressed) idle_wake_buttons=false;
+        if (!idle_standby) update_status_leds(imu_ok);
+        if (!idle_standby && imu_ok && !capture_active && !orientation_fused && (!app_current() || !app_current()->owns_imu) && absolute_time_diff_us(get_absolute_time(), next_imu_report) <= 0) {
             int16_t x, y, z;
             if (lsm6dsv_read_accel(&x, &y, &z)) {
                 live_accel_x = calibration_correct_axis(x, 0u, LIVE_ACCEL_COUNTS_PER_G);
                 live_accel_y = calibration_correct_axis(y, 1u, LIVE_ACCEL_COUNTS_PER_G);
                 live_accel_z = calibration_correct_axis(z, 2u, LIVE_ACCEL_COUNTS_PER_G);
                 if (orientation_stream) printf("O,%d,%d,%d\n", live_accel_x, live_accel_y, live_accel_z);
+                int16_t activity_xyz[3]={live_accel_x,live_accel_y,live_accel_z};
+                idle_power_motion(&idle_power, activity_xyz, to_ms_since_boot(get_absolute_time()));
                 update_level_filter();
                 AppSample sample={.raw={x,y,z},.corrected={live_accel_x,live_accel_y,live_accel_z},
                     .filtered={level_accel_x,level_accel_y,level_accel_z},.time_ms=to_ms_since_boot(get_absolute_time())};
@@ -1757,6 +1818,7 @@ int main(void) {
             }
             next_imu_report = make_timeout_time_ms(app_sample_period_ms());
         }
-        sleep_ms(capture_active || orientation_fused || (app_current() && app_current()->fast_tick) ? 1 : 10);
+        service_idle_power(pressed != 0);
+        sleep_ms(idle_standby ? 20 : capture_active || orientation_fused || (app_current() && app_current()->fast_tick) ? 1 : 10);
     }
 }

@@ -14,3 +14,4 @@ void capture_app_draw(void);
 void capture_app_button(unsigned button);
 uint32_t capture_app_sample_period_ms(void);
 void capture_app_refresh_live(void);
+bool capture_app_can_idle(void);

@@ -21,3 +21,6 @@ extern unsigned test_flash_erases, test_flash_programs, test_irq_depth, test_sou
 extern size_t test_flash_program_limit;
 extern bool test_screen_ok;
 extern uint8_t test_contrast;
+
+extern bool test_usb_connected, test_idle_ok, test_wake_ok;
+extern unsigned test_idle_starts, test_idle_ends;

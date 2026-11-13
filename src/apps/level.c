@@ -49,4 +49,5 @@ static void level_sample(const AppSample *sample) {
     }
 }
 static uint32_t level_period(void) { return 100; }
-const App level_app = {.draw=show_inclinometer,.button=level_button,.sample=level_sample,.sample_period_ms=level_period};
+static bool level_can_idle(void) { return true; }
+const App level_app = {.can_idle=level_can_idle,.draw=show_inclinometer,.button=level_button,.sample=level_sample,.sample_period_ms=level_period};

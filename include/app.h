@@ -23,6 +23,8 @@ typedef struct App {
     uint32_t (*sample_period_ms)(void);
     bool owns_imu; // Application services its own live reads (e.g. Maze).
     bool fast_tick;
+    // Absent means automatic standby is inhibited (safe default for new apps).
+    bool (*can_idle)(void);
 } App;
 
 typedef struct {
@@ -44,3 +46,4 @@ void app_button(unsigned button);
 void app_tick(void);
 void app_publish_sample(const AppSample *sample);
 uint32_t app_sample_period_ms(void);
+bool app_can_idle(void);

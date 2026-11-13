@@ -26,4 +26,5 @@ static void show_raw_xyz(void) {
 static void raw_button(unsigned button) { if (button==1) app_return_home(); }
 static void raw_sample(const AppSample *sample) { (void)sample; show_raw_xyz(); }
 static uint32_t raw_period(void) { return 100; }
-const App raw_app = {.draw=show_raw_xyz,.button=raw_button,.sample=raw_sample,.sample_period_ms=raw_period};
+static bool raw_can_idle(void) { return true; }
+const App raw_app = {.can_idle=raw_can_idle,.draw=show_raw_xyz,.button=raw_button,.sample=raw_sample,.sample_period_ms=raw_period};

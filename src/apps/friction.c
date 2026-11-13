@@ -239,5 +239,6 @@ static void friction_sample(const AppSample *sample) {
     if (time_reached(next_friction_display)) { show_friction(); next_friction_display=make_timeout_time_ms(LEVEL_DISPLAY_PERIOD_MS); }
 }
 static uint32_t friction_period(void) { return friction_state==FRICTION_ARMED ? 20 : 250; }
-const App friction_app = {.enter=friction_reset_session,.draw=show_friction,.button=friction_button,
+static bool friction_can_idle(void) { return friction_state != FRICTION_ARMED; }
+const App friction_app = {.can_idle=friction_can_idle,.enter=friction_reset_session,.draw=show_friction,.button=friction_button,
     .sample=friction_sample,.sample_period_ms=friction_period};

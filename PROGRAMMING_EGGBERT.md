@@ -1,3 +1,12 @@
+## Stage-one standby test build (November 13, 2026)
+
+The current local build identifies as `eggbert-integrated-h7-idle1` and uses a
+60-second timeout. All 14 ARM regression suites and the production build pass.
+Hardware trials are pending. Follow LOW_POWER_DESIGN.md for button wake,
+recording-retention checks and the planned processor-sleep/motion-wake stage.
+Close serial monitors when testing the inactivity timeout: open CDC sessions
+inhibit standby. Rebuild before programming using the procedure below.
+
 ## H6 Pendulum correction (November 12, 2026)
 
 The current build identifies as `eggbert-integrated-h6`. It fixes the Pendulum

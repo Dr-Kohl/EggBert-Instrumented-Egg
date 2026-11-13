@@ -38,3 +38,6 @@ uint32_t app_sample_period_ms(void) {
     uint32_t period = current && current->sample_period_ms ? current->sample_period_ms() : 250u;
     return period ? period : 1u;
 }
+bool app_can_idle(void) {
+    return !current || (current->can_idle && current->can_idle());
+}

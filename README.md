@@ -1,5 +1,13 @@
 # EggBert RP2354A board bring-up
 
+## Stage-one standby test build: H7-idle1 (November 13, 2026)
+
+The local build adds a 60-second inactivity timer, OLED/sensor standby and
+button wake, retaining completed recordings. Active experiments and open USB
+serial sessions stay awake. The first wake press only wakes the device.
+Processor sleep and shake-to-wake are the next stage. See
+[low-power design and physical test procedure](LOW_POWER_DESIGN.md).
+
 ## Latest firmware: H6 (November 12, 2026)
 
 Pendulum now measures a complete back-and-forth cycle. Two bottom crossings

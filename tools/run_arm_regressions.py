@@ -21,9 +21,10 @@ for script in ['generate_apps.py','make_app_core_test.py','make_maze_test.py','m
  args=[sys.executable,'tools/'+script]
  if script=='generate_apps.py': args+=['--manifest','apps.json','--output-dir','build/generated/apps']
  subprocess.run(args,check=True)
-common=['tests/app_platform.c','src/app.c','src/home.c','src/home_menu.c','src/ui.c','src/ssd1306.c','src/maze.c','src/pendulum_detector.c','src/settings.c','build/generated/apps/app_registry.c']
-tests=[('pendulum_detector_test',['tests/pendulum_detector_test.c','src/pendulum_detector.c'],[],[]),('hammer_trigger_test',['tests/hammer_trigger_test.c'],[],[]),('hammer_capture_test',['build/hammer-capture-test.c'],[],[]),('imu_driver_test',['tests/imu_driver_test.c','src/lsm6dsv.c'],['tests/imu_stubs'],[]),('sound_test',['tests/sound_test.c','src/sound.c'],['tests/sound_stubs','tests/imu_stubs'],[]),('ssd1306_schedule_test',['tests/ssd1306_schedule_test.c'],['tests/imu_stubs'],[]),('beam_test',['tests/beam_test.c','tmp/beam-capture-test.c'],[],['-DBEAM_CAPTURE_TEST']),('main',['tests/apps_test.c',*common],['tests/app_stubs','tests'],[])]
+common=['tests/app_platform.c','src/app.c','src/home.c','src/home_menu.c','src/ui.c','src/ssd1306.c','src/maze.c','src/pendulum_detector.c','src/idle_power.c','src/settings.c','build/generated/apps/app_registry.c']
+tests=[('idle_power_test',['tests/idle_power_test.c','src/idle_power.c'],[],[]),('pendulum_detector_test',['tests/pendulum_detector_test.c','src/pendulum_detector.c'],[],[]),('hammer_trigger_test',['tests/hammer_trigger_test.c'],[],[]),('hammer_capture_test',['build/hammer-capture-test.c'],[],[]),('imu_driver_test',['tests/imu_driver_test.c','src/lsm6dsv.c'],['tests/imu_stubs'],[]),('sound_test',['tests/sound_test.c','src/sound.c'],['tests/sound_stubs','tests/imu_stubs'],[]),('ssd1306_schedule_test',['tests/ssd1306_schedule_test.c'],['tests/imu_stubs'],[]),('beam_test',['tests/beam_test.c','tmp/beam-capture-test.c'],[],['-DBEAM_CAPTURE_TEST']),('main',['tests/apps_test.c',*common],['tests/app_stubs','tests'],[])]
 tests += [
+ ('main',['tests/idle_session_test.c',*common],['tests/app_stubs','tests'],[]),
  ('main',['tests/home_menu_test.c','src/home_menu.c'],[],[]),
  ('main',['tests/settings_test.c','tests/app_platform.c','src/ui.c','src/ssd1306.c'],['tests/app_stubs','tests'],[]),
  ('main',['build/maze-session-test.c',*common],['tests/app_stubs','tests'],[]),

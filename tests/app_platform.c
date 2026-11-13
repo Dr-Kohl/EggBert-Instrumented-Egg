@@ -21,6 +21,8 @@ uint8_t test_flash[PICO_FLASH_SIZE_BYTES];
 unsigned test_flash_erases, test_flash_programs, test_irq_depth, test_sound_stops;
 size_t test_flash_program_limit=FLASH_PAGE_SIZE;
 bool test_screen_ok=true, sound_enabled=true;
+bool test_usb_connected, test_idle_ok=true, test_wake_ok=true;
+unsigned test_idle_starts, test_idle_ends;
 uint8_t test_contrast=0x7f;
 static bool expect_contrast;
 static i2c_inst_t i2c_instance;
@@ -90,3 +92,7 @@ int16_t calibration_correct_axis(int16_t raw,unsigned axis,uint32_t scale) {
     if (!test_calibration.scale_q16[axis]) return raw;
     return egg_correct_low(raw,test_calibration.offset_live_counts[axis],test_calibration.scale_q16[axis],scale);
 }
+
+bool stdio_usb_connected(void) { return test_usb_connected; }
+bool lsm6dsv_idle_start(void) { ++test_idle_starts; return test_idle_ok; }
+bool lsm6dsv_idle_end(void) { ++test_idle_ends; return test_wake_ok; }

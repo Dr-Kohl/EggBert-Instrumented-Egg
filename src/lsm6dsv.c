@@ -42,6 +42,8 @@ static lsm6dsv_accel_pair_t pending_pair;
 static uint8_t pending_mask, pending_slot, previous_slot;
 static bool have_pair;
 static bool orientation_running;
+static bool idle_running;
+static uint8_t idle_saved_ctrl1, idle_saved_ctrl2, idle_saved_high;
 static const uint8_t orientation_regs[] = {0x07, 0x08, 0x09, 0x0A, 0x0D, 0x10, 0x11, 0x12, 0x15, 0x17};
 static uint8_t orientation_saved[sizeof orientation_regs];
 static uint8_t saved_emb_enable, saved_emb_fifo, saved_sflp_odr;
@@ -114,6 +116,7 @@ static bool read_fifo_sample(lsm6dsv_accel_sample_t *sample) {
 // WHO_AM_I chooses the supported hardware at boot; unknown devices must not be
 // driven using an assumed-compatible register map just because SPI responds.
 bool lsm6dsv_init(void) {
+    idle_running = false;
     dual_running = false;
     detected_model = LSM6DSV_MODEL_UNKNOWN;
     detected_id = 0;
@@ -164,8 +167,50 @@ bool lsm6dsv_init(void) {
     return true;
 }
 
-bool lsm6dsv_read_accel(int16_t *x, int16_t *y, int16_t *z) {
+bool lsm6dsv_idle_end(void) {
+    if (!idle_running) return true;
+    write_reg(LSM6DSV_CTRL1, idle_saved_ctrl1);
+    write_reg(LSM6DSV_CTRL2, idle_saved_ctrl2);
+    if (detected_model == LSM6DSV_MODEL_LSM6DSV320X)
+        write_reg(LSM6DSV320X_CTRL1_XL_HG, idle_saved_high);
+    if (read_reg(LSM6DSV_CTRL1) != idle_saved_ctrl1 ||
+        read_reg(LSM6DSV_CTRL2) != idle_saved_ctrl2 ||
+        (detected_model == LSM6DSV_MODEL_LSM6DSV320X &&
+         read_reg(LSM6DSV320X_CTRL1_XL_HG) != idle_saved_high)) return false;
+    idle_running = false;
+    sleep_ms(20); // let the restored live stream settle before app sampling
+    return true;
+}
+
+bool lsm6dsv_idle_start(void) {
     if (detected_model == LSM6DSV_MODEL_UNKNOWN) return false;
+    if (idle_running) return read_reg(LSM6DSV_CTRL1)==0x42u &&
+        read_reg(LSM6DSV_CTRL2)==0 &&
+        (detected_model!=LSM6DSV_MODEL_LSM6DSV320X || read_reg(LSM6DSV320X_CTRL1_XL_HG)==0);
+    // Caller also protects armed applications; driver refuses active FIFO/fusion.
+    if (orientation_running || dual_running || read_reg(LSM6DSV_FIFO_CTRL4)) return false;
+    idle_saved_ctrl1 = read_reg(LSM6DSV_CTRL1);
+    idle_saved_ctrl2 = read_reg(LSM6DSV_CTRL2);
+    idle_saved_high = detected_model == LSM6DSV_MODEL_LSM6DSV320X ?
+                      read_reg(LSM6DSV320X_CTRL1_XL_HG) : 0;
+    idle_running = true;
+    write_reg(LSM6DSV_CTRL2, 0);
+    if (detected_model == LSM6DSV_MODEL_LSM6DSV320X)
+        write_reg(LSM6DSV320X_CTRL1_XL_HG, 0);
+    // ST's V1/V2 CTRL1: operating mode 4 (LP, two averages), ODR 2 (7.5 Hz).
+    // Keep the normal live +/-2 g range: only the sensor power/rate changes.
+    write_reg(LSM6DSV_CTRL1, 0x42u);
+    if (read_reg(LSM6DSV_CTRL1) != 0x42u || read_reg(LSM6DSV_CTRL2) != 0 ||
+        (detected_model == LSM6DSV_MODEL_LSM6DSV320X &&
+         read_reg(LSM6DSV320X_CTRL1_XL_HG) != 0)) {
+        lsm6dsv_idle_end();
+        return false;
+    }
+    return true;
+}
+
+bool lsm6dsv_read_accel(int16_t *x, int16_t *y, int16_t *z) {
+    if (detected_model == LSM6DSV_MODEL_UNKNOWN || idle_running) return false;
     uint8_t tx[7] = { (uint8_t)(LSM6DSV_OUTX_L_A | 0x80u), 0, 0, 0, 0, 0, 0 };
     uint8_t rx[sizeof tx] = {0};
     select_imu(true);
@@ -179,7 +224,7 @@ bool lsm6dsv_read_accel(int16_t *x, int16_t *y, int16_t *z) {
 }
 
 bool lsm6dsv_gyro_start(void) {
-    if (detected_model == LSM6DSV_MODEL_UNKNOWN) return false;
+    if (detected_model == LSM6DSV_MODEL_UNKNOWN || idle_running) return false;
     // BDU prevents mixed low/high bytes; IF_INC supports XYZ burst reads.
     write_reg(LSM6DSV_CTRL3, read_reg(LSM6DSV_CTRL3) | 0x44u);
     write_reg(LSM6DSV_CTRL6, 0x04u); // +/-2000 deg/s (70 mdps/count)
@@ -192,7 +237,7 @@ void lsm6dsv_gyro_stop(void) {
 }
 
 bool lsm6dsv_read_gyro(int16_t *x, int16_t *y, int16_t *z) {
-    if (detected_model == LSM6DSV_MODEL_UNKNOWN) return false;
+    if (detected_model == LSM6DSV_MODEL_UNKNOWN || idle_running) return false;
     if (!(read_reg(LSM6DSV_STATUS_REG) & 0x02u)) return false;
     uint8_t tx[7] = { (uint8_t)(LSM6DSV_OUTX_L_G | 0x80u), 0, 0, 0, 0, 0, 0 };
     uint8_t rx[sizeof tx] = {0};
@@ -207,7 +252,7 @@ bool lsm6dsv_read_gyro(int16_t *x, int16_t *y, int16_t *z) {
 }
 
 static bool fifo_start_config(uint8_t rate, uint8_t range) {
-    if (detected_model == LSM6DSV_MODEL_UNKNOWN) return false;
+    if (detected_model == LSM6DSV_MODEL_UNKNOWN || idle_running) return false;
     lsm6dsv_orientation_stop();
     dual_running = false;
     if (detected_model == LSM6DSV_MODEL_LSM6DSV320X) {
@@ -277,6 +322,7 @@ bool lsm6dsv_fifo_irq_pending(void) {
 // Save registers before borrowing the IMU for SFLP (sensor fusion low power).
 // Stop restores them so live labs can resume their own ranges and sample rates.
 bool lsm6dsv_orientation_start(void) {
+    if (idle_running) return false;
     if (detected_model == LSM6DSV_MODEL_UNKNOWN) return false;
     if (orientation_running) return true;
     orientation_have_xy = false;

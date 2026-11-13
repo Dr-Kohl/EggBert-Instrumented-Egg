@@ -41,4 +41,5 @@ static void settings_button(unsigned button) {
     }
 }
 
-const App settings_app={.enter=settings_enter,.draw=show_settings,.button=settings_button};
+static bool settings_can_idle(void) { return true; }
+const App settings_app={.can_idle=settings_can_idle,.enter=settings_enter,.draw=show_settings,.button=settings_button};

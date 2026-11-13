@@ -4,7 +4,8 @@
 
 #define i2c0 ((void *)1)
 #define GPIO_FUNC_I2C 3u
-static unsigned transfers, pages, bad;
+static unsigned transfers, pages, bad, off_commands, on_commands;
+static bool reject_power;
 void i2c_init(void *bus, unsigned rate) { (void)bus; (void)rate; }
 void gpio_set_function(unsigned pin, unsigned function) { (void)pin; (void)function; }
 void gpio_pull_up(unsigned pin) { (void)pin; }
@@ -12,6 +13,10 @@ void sleep_ms(unsigned ms) { (void)ms; }
 int i2c_write_blocking(void *bus, uint8_t address, const uint8_t *data, size_t size, bool nostop) {
     if (bus!=i2c0 || address!=0x3c || nostop) bad=1;
     ++transfers;
+    if(size==2 && data[0]==0 && (data[1]==0xae || data[1]==0xaf)) {
+        if(reject_power) return -1;
+        if(data[1]==0xae) off_commands++; else on_commands++;
+    }
     if (size==129 && data[0]==0x40) ++pages;
     else if (size!=2 || data[0]!=0) bad=1;
     return (int)size;
@@ -39,5 +44,16 @@ int ssd1306_schedule_test(void) {
     if (pages!=17) return 7;
     ssd1306_service_show();
     if (pages!=17 || bad) return 8;
+    ssd1306_schedule_show();
+    if(!ssd1306_set_power(false)) return 9;
+    unsigned asleep_transfers=transfers;
+    ssd1306_service_show(); ssd1306_show(); ssd1306_schedule_show(); ssd1306_service_show();
+    if(transfers!=asleep_transfers || off_commands!=2) return 10; // init + standby
+    reject_power=true;
+    if(ssd1306_set_power(true)) return 11;
+    reject_power=false;
+    if(!ssd1306_set_power(true) || on_commands!=2) return 12;
+    ssd1306_show();
+    if(pages!=25 || bad) return 13;
     return 0;
 }

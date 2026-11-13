@@ -45,5 +45,6 @@ static void show_acceleration(void) {
 static void acceleration_button(unsigned button) { if (button==1) app_return_home(); }
 static void acceleration_sample(const AppSample *sample) { (void)sample; show_acceleration(); }
 static uint32_t acceleration_period(void) { return 100; }
-const App acceleration_app = {.draw=show_acceleration,.button=acceleration_button,
+static bool acceleration_can_idle(void) { return true; }
+const App acceleration_app = {.can_idle=acceleration_can_idle,.draw=show_acceleration,.button=acceleration_button,
     .sample=acceleration_sample,.sample_period_ms=acceleration_period};

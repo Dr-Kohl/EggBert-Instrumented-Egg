@@ -14,6 +14,8 @@
 // The egg presents a rotated 64-by-128 logical screen; ui_pixel_unchecked maps
 // between the two coordinate systems. Drawing changes RAM until show sends it.
 static uint8_t framebuffer[OLED_WIDTH * OLED_PAGES];
+static uint8_t pending_page = OLED_PAGES;
+static bool display_powered = true;
 
 static bool command(uint8_t value) {
     uint8_t packet[] = {0x00, value};
@@ -21,6 +23,7 @@ static bool command(uint8_t value) {
 }
 
 bool ssd1306_init(void) {
+    display_powered = true;
     i2c_init(OLED_I2C, OLED_I2C_BAUD);
     gpio_set_function(OLED_SDA_PIN, GPIO_FUNC_I2C);
     gpio_set_function(OLED_SCL_PIN, GPIO_FUNC_I2C);
@@ -40,6 +43,14 @@ bool ssd1306_init(void) {
 
 bool ssd1306_set_contrast(uint8_t contrast) {
     return command(0x81) && command(contrast);
+}
+
+bool ssd1306_set_power(bool on) {
+    if (display_powered == on) return true;
+    if (!command(on ? 0xAFu : 0xAEu)) return false;
+    display_powered = on;
+    if (!on) pending_page = OLED_PAGES;
+    return true;
 }
 
 void ssd1306_clear(void) { memset(framebuffer, 0, sizeof framebuffer); }
@@ -146,7 +157,6 @@ void ssd1306_text(uint8_t row, const char *text) {
     }
 }
 
-static uint8_t pending_page = OLED_PAGES;
 
 static void show_page(uint8_t page) {
     command(0xB0 | page); command(0x00); command(0x10);
@@ -155,13 +165,14 @@ static void show_page(uint8_t page) {
     i2c_write_blocking(OLED_I2C, OLED_I2C_ADDRESS, packet, sizeof packet, false);
 }
 
-void ssd1306_schedule_show(void) { pending_page=0; }
+void ssd1306_schedule_show(void) { if (display_powered) pending_page=0; }
 
 void ssd1306_service_show(void) {
-    if (pending_page<OLED_PAGES) show_page(pending_page++);
+    if (display_powered && pending_page<OLED_PAGES) show_page(pending_page++);
 }
 
 void ssd1306_show(void) {
     pending_page=OLED_PAGES;
+    if (!display_powered) return;
     for (uint8_t page = 0; page < OLED_PAGES; ++page) show_page(page);
 }
