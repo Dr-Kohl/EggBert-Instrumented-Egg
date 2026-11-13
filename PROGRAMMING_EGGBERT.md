@@ -1,14 +1,14 @@
-## Current firmware: H8-sleep5 (November 13, 2026)
+## Current firmware: H8.1 (November 13, 2026)
 
 For batch programming, download `eggbert_bringup.elf` and `SHA256SUMS.txt` from
-[release h8-sleep5](https://github.com/Dr-Kohl/EggBert-Instrumented-Egg/releases/tag/h8-sleep5).
-This is the exact ELF programmed and flash-verified on Dr. Kohl's V2 board.
+[release h8.1](https://github.com/Dr-Kohl/EggBert-Instrumented-Egg/releases/tag/h8.1).
+H8.1 adds the read-only **FW H8.1** line in Settings to the five-minute sleep build.
 Keep that same file for every board; plug in one EggBert at a time and use the
 Picotool procedure below, substituting the downloaded ELF's path for
 `build\eggbert_bringup.elf`. No local rebuild is needed when using the release ELF.
 Compare `Get-FileHash <downloaded-elf-path> -Algorithm SHA256` with SHA256SUMS.txt.
 
-After programming, serial `status` must identify `eggbert-integrated-h8-sleep5`
+After programming, open Settings and confirm **FW H8.1**. Serial `status` must identify `eggbert-integrated-H8.1`
 and report `idle timeout 300000 ms`. The device sleeps after five minutes of
 inactivity; shake or press any button to wake. The first press only wakes.
 Recordings survive sleep; flashing or power-off clears them, so download first.
@@ -48,7 +48,7 @@ Use this procedure for every JLCPCB Instrumented Egg / EggBert board. It is inte
 - Branch `master` combines Caleb's modular apps/settings with Hammer Hit and
   gyro arming, and includes the shared version 1/version 2 firmware.
   Build and flash from this checkout for Hammer Hit work. Firmware `status`
-  identifies the current build as `eggbert-integrated-h8-sleep5`.
+  identifies the current build as `eggbert-integrated-H8.1`.
 - The earlier checkout at `C:\Users\Kohlc\OneDrive - Cedarville University\Documents\ChatGPT\EggBert Instrumented Egg`
   has unfinished local changes; preserve them. Confirm the checkout and changes
   with `git log -1` and `git status` before building or programming.

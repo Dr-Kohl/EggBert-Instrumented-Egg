@@ -1,10 +1,11 @@
 # EggBert RP2354A board bring-up
 
-## Latest firmware: H8-sleep5 (November 13, 2026)
+## Latest firmware: H8.1 (November 13, 2026)
 
-[Download the flash-verified firmware and checksum](https://github.com/Dr-Kohl/EggBert-Instrumented-Egg/releases/tag/h8-sleep5).
+[Download the firmware and checksum](https://github.com/Dr-Kohl/EggBert-Instrumented-Egg/releases/tag/h8.1).
 Program `eggbert_bringup.elf` using [the programming guide](PROGRAMMING_EGGBERT.md).
-Serial `status` must identify `eggbert-integrated-h8-sleep5` and report
+Settings displays **FW H8.1** so boards can be checked without a computer.
+Serial `status` must identify `eggbert-integrated-H8.1` and report
 `idle timeout 300000 ms` (five minutes).
 
 After five minutes of inactivity, the display turns off and the processor sleeps

@@ -5,6 +5,11 @@ Agreed November 13, 2026. Shared firmware for V1 (LSM6DSV) and V2
 
 ## Current timeout: five minutes (H8-sleep5)
 
+H8.1 adds a read-only FW H8.1 line to Settings. The display and serial build
+identity come from include/firmware_version.h. All sleep/wake behavior and the
+five-minute timeout are unchanged from H8-sleep5. Use release h8.1 for batch
+programming; this visible version distinguishes it from the earlier builds.
+
 Dr. Kohl confirmed shake wake and recording retention on V2, then selected
 five minutes of inactivity for normal use. IDLE_TIMEOUT_MS is now
 5u * 60u * 1000u (300000 ms) in include/idle_power.h. Processor sleep, wake

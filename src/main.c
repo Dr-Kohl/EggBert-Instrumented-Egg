@@ -28,6 +28,7 @@
 #include "hammer_trigger.h"
 #include "idle_power.h"
 #include "processor_sleep.h"
+#include "firmware_version.h"
 #include "pico/stdlib.h"
 #include "pico/stdio_usb.h"
 #include "ssd1306.h"
@@ -676,7 +677,7 @@ static const char *capture_state_name(void) {
 }
 
 static void print_capture_status(void) {
-    printf("Firmware: eggbert-integrated-h8-sleep5 (2026-11-13).\n");
+    printf("Firmware: " EGGBERT_FIRMWARE_ID " (" EGGBERT_FIRMWARE_DATE ").\n");
     printf("Power: %s; idle timeout %lu ms; stage 2, processor sleep, button/motion/USB wake.\n",
            idle_standby ? "STANDBY" : "awake", (unsigned long)IDLE_TIMEOUT_MS);
     printf("Sleep entries: %lu; last wake mask: %u (button=1, motion=2, USB=4).\n",
