@@ -5,10 +5,9 @@ Agreed November 13, 2026. Shared firmware for V1 (LSM6DSV) and V2
 
 ## Stage one: H7-idle2
 
-H7-idle1 was programmed and flash-verified on a V2 board. Dr. Kohl confirmed
-OLED standby, button wake and motion resetting the idle timeout. The H7-idle2
-follow-up adds the recording LED reminder below; it needs programming and a
-physical blink check.
+H7-idle1 and H7-idle2 were programmed and flash-verified on a V2 board. Dr. Kohl
+confirmed OLED standby, button wake, motion resetting the idle timeout and
+reported that the follow-up recording reminder behavior was working.
 All 14 ARM regression suites passed, including the real V1/V2 SPI driver,
 SSD1306 commands, idle policy and actual application standby/wake integration.
 
@@ -77,15 +76,63 @@ the V2-only high-g register (4Eh) on V1. Restore uses the pre-standby values.
 7. Repeat on V1 and V2, and measure battery current before/after standby.
    No battery-life improvement has yet been measured or promised.
 
-## Stage two (pending)
+## Stage two: H8-sleep
 
-Add processor sleep with RAM retained, GPIO button wake, and low-power IMU
-motion interrupt wake. Verify both IMUs' interrupt configuration and processor
-clock/USB restoration on hardware. Preserve the stage-one capture and activity
-protections. Consider production timeout only after repeated successful trials.
+November 13: all 15 ARM regression suites and the RP2350 firmware build passed.
+Programmed and flash-verified on V2 serial 612C09B133DDB22A (COM46). After
+closing the CDC session for over one minute, status confirmed one sleep entry
+and wake mask 4 (USB), with OLED OK and normal live acceleration restored.
+Physical shake/button wake, recording-reminder timing, V1 hardware and battery
+current measurements remain hands-on checks; no current saving is quantified.
+
+Keep the one-minute test timeout and all stage-one activity protections. Use
+Cortex-M33 SLEEPDEEP plus WFI between interrupt events, retaining all SRAM and
+the capture buffers. Gate unused ADC, I2C, SPI, PWM, PIO and SHA engine clocks
+while asleep; restore the exact saved sleep masks and SCR before interrupts
+run. Leave PLLs, flash, SRAM, GPIO, ticks, timers and USB available. This is
+processor sleep, not full oscillator-stopped dormant mode or power-off. Keeping
+USB available allows a host to connect without losing the recording. USB SDK
+background IRQs may briefly wake the CPU; the display stays asleep. No battery
+current reduction has yet been measured.
+
+Wake inputs use a raw GPIO IRQ handler, leaving the driver's capture INT1
+callback intact. Any button, low-g motion on INT2, or a connected CDC host wakes
+the same view. The first button press/chord is consumed even when a brief press
+is released before the main loop runs. Motion/USB wake does not issue app input.
+Timer-only wakes service the 100 ms / five-second recording reminder and return
+to processor sleep without turning on the OLED. With no recording, a five-second
+safety timer keeps the loop recoverable without display/sensor polling.
+
+Both IMUs save and restore every changed low-g, rate and interrupt register:
+INT2_CTRL, CTRL4, CTRL8, FUNCTIONS_ENABLE, INACTIVITY_DUR, TAP_CFG0, WAKE_UP_THS,
+WAKE_UP_DUR and MD2_CFG, plus CTRL1/2 and V2 high-g control. Idle uses +/-2 g,
+7.5 Hz LP two-average mode, slope filtering (rejecting static gravity), threshold
+weight 2 (31.25 mg/LSB), threshold 6 (187.5 mg), one-sample duration, latched
+interrupts and settling mask. A 500 ms settling interval precedes clearing the
+latch and routing motion to INT2. Register readback failure rolls back entry;
+restoration failure leaves standby retryable. Do not change to 15 minutes until
+physical wake testing succeeds on both boards.
+
+Serial status reports sleep-entry count and last wake reason bits (button=1,
+motion=2, USB=4), so timer wakes can be distinguished from a full display wake.
+
+References:
+- https://github.com/raspberrypi/pico-extras/blob/master/src/rp2_common/pico_sleep/sleep.c
+- https://www.st.com/resource/en/datasheet/lsm6dsv320x.pdf
+- https://github.com/STMicroelectronics/STMems_Standard_C_drivers/blob/master/lsm6dsv_STdC/examples/lsm6dsv_wakeup.c
+
+Physical checks: leave Home stationary for one minute with the serial monitor
+closed; shake to wake; repeat with each button, and confirm the first press only
+wakes. Repeat with a saved recording and compare downloads across sleep/wake;
+check that red reminder pulses do not wake the display. Reconnect USB after
+standby and confirm status/downloads still work. Repeat on V1 before declaring
+both boards physically validated. Measure battery current separately.
 
 The actual firmware LED logic is included in the standby integration tests.
 Tests cover pulse boundaries, repeat timing, clock rollover, empty/no recording,
 return to awake indication, no OLED redraw during pulses, and unchanged capture
-buffers/metadata through standby and wake. Processor sleep and motion wake
-remain deferred to stage two.
+buffers/metadata through standby and wake. Stage-two tests additionally cover
+both IMUs' complete wake-register configuration, rollback and restoration,
+timer/button/motion/USB wake paths, an IRQ arriving with interrupts masked,
+clock/SCR restoration before ISR execution, already-asserted wake inputs,
+alarm-allocation failure, and input consumption through application wake.

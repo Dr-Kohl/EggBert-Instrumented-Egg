@@ -83,6 +83,7 @@ add_executable(eggbert_bringup
     src/sound.c
     src/settings.c
     src/idle_power.c
+    src/processor_sleep.c
     src/pendulum_detector.c
     src/maze.c
     src/app.c

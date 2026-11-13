@@ -26,3 +26,5 @@ extern bool test_usb_connected, test_idle_ok, test_wake_ok;
 extern unsigned test_idle_starts, test_idle_ends;
 
 extern unsigned test_led_mask;
+extern unsigned test_sleep_begins, test_sleep_ends, test_sleep_reason;
+extern uint32_t test_sleep_delay;

@@ -44,6 +44,12 @@ static bool have_pair;
 static bool orientation_running;
 static bool idle_running;
 static uint8_t idle_saved_ctrl1, idle_saved_ctrl2, idle_saved_high;
+// Shared V1/V2 low-g wake engine. INT2 is separate from capture's FIFO INT1.
+static const uint8_t idle_regs[]={0x0e,0x13,0x17,0x50,0x54,0x56,0x5b,0x5c,0x5f};
+static const uint8_t idle_values[]={0,0,0,0x80,0x20,0x21,6,0,0x20};
+static uint8_t idle_saved[sizeof idle_regs];
+
+static bool idle_config_ok(void);
 static const uint8_t orientation_regs[] = {0x07, 0x08, 0x09, 0x0A, 0x0D, 0x10, 0x11, 0x12, 0x15, 0x17};
 static uint8_t orientation_saved[sizeof orientation_regs];
 static uint8_t saved_emb_enable, saved_emb_fifo, saved_sflp_odr;
@@ -169,10 +175,16 @@ bool lsm6dsv_init(void) {
 
 bool lsm6dsv_idle_end(void) {
     if (!idle_running) return true;
+    write_reg(0x5f,0); // disconnect wake source before changing rate/filter
+    for (unsigned i=0;i<sizeof idle_regs-1;i++) write_reg(idle_regs[i],idle_saved[i]);
     write_reg(LSM6DSV_CTRL1, idle_saved_ctrl1);
     write_reg(LSM6DSV_CTRL2, idle_saved_ctrl2);
     if (detected_model == LSM6DSV_MODEL_LSM6DSV320X)
         write_reg(LSM6DSV320X_CTRL1_XL_HG, idle_saved_high);
+    (void)read_reg(0x45); // acknowledge the latched wake event
+    write_reg(0x5f,idle_saved[sizeof idle_regs-1]);
+    for (unsigned i=0;i<sizeof idle_regs;i++)
+        if (read_reg(idle_regs[i])!=idle_saved[i]) return false;
     if (read_reg(LSM6DSV_CTRL1) != idle_saved_ctrl1 ||
         read_reg(LSM6DSV_CTRL2) != idle_saved_ctrl2 ||
         (detected_model == LSM6DSV_MODEL_LSM6DSV320X &&
@@ -182,27 +194,39 @@ bool lsm6dsv_idle_end(void) {
     return true;
 }
 
+static bool idle_config_ok(void) {
+    for (unsigned i=0;i<sizeof idle_regs;i++)
+        if (read_reg(idle_regs[i])!=idle_values[i]) return false;
+    return read_reg(LSM6DSV_CTRL1)==0x42u && read_reg(LSM6DSV_CTRL2)==0 &&
+        (detected_model!=LSM6DSV_MODEL_LSM6DSV320X || read_reg(LSM6DSV320X_CTRL1_XL_HG)==0);
+}
+
 bool lsm6dsv_idle_start(void) {
     if (detected_model == LSM6DSV_MODEL_UNKNOWN) return false;
-    if (idle_running) return read_reg(LSM6DSV_CTRL1)==0x42u &&
-        read_reg(LSM6DSV_CTRL2)==0 &&
-        (detected_model!=LSM6DSV_MODEL_LSM6DSV320X || read_reg(LSM6DSV320X_CTRL1_XL_HG)==0);
+    if (idle_running) return idle_config_ok();
     // Caller also protects armed applications; driver refuses active FIFO/fusion.
     if (orientation_running || dual_running || read_reg(LSM6DSV_FIFO_CTRL4)) return false;
     idle_saved_ctrl1 = read_reg(LSM6DSV_CTRL1);
     idle_saved_ctrl2 = read_reg(LSM6DSV_CTRL2);
     idle_saved_high = detected_model == LSM6DSV_MODEL_LSM6DSV320X ?
                       read_reg(LSM6DSV320X_CTRL1_XL_HG) : 0;
+    for (unsigned i=0;i<sizeof idle_regs;i++) idle_saved[i]=read_reg(idle_regs[i]);
     idle_running = true;
+    write_reg(0x5f,0);
+    for (unsigned i=0;i<sizeof idle_regs-1;i++) write_reg(idle_regs[i],idle_values[i]);
     write_reg(LSM6DSV_CTRL2, 0);
     if (detected_model == LSM6DSV_MODEL_LSM6DSV320X)
         write_reg(LSM6DSV320X_CTRL1_XL_HG, 0);
     // ST's V1/V2 CTRL1: operating mode 4 (LP, two averages), ODR 2 (7.5 Hz).
     // Keep the normal live +/-2 g range: only the sensor power/rate changes.
     write_reg(LSM6DSV_CTRL1, 0x42u);
-    if (read_reg(LSM6DSV_CTRL1) != 0x42u || read_reg(LSM6DSV_CTRL2) != 0 ||
-        (detected_model == LSM6DSV_MODEL_LSM6DSV320X &&
-         read_reg(LSM6DSV320X_CTRL1_XL_HG) != 0)) {
+    // Slope-filtered acceleration rejects static gravity. INACTIVITY_DUR weight
+    // 2 selects 31.25 mg/LSB: threshold 6 is 0.1875 g; duration zero is one sample.
+    // Latch until WAKE_UP_SRC is read, mask settling, then route wake to INT2.
+    sleep_ms(500);
+    (void)read_reg(0x45);
+    write_reg(0x5f,0x20);
+    if (!idle_config_ok()) {
         lsm6dsv_idle_end();
         return false;
     }

@@ -10,6 +10,7 @@ static uint8_t queue[32][7];
 static unsigned queue_size, queue_index;
 static unsigned writes, highg_writes, reset_polls, sleeps, transient_reads;
 static bool reset_stuck, reject_config, short_transfer, short_fifo, reject_highg;
+static uint8_t reject_reg;
 
 void gpio_put(uint p, bool v) { (void)p; (void)v; }
 void gpio_init(uint p) { (void)p; }
@@ -43,7 +44,8 @@ int spi_write_blocking(int s, const uint8_t *tx, size_t n) {
         regs[0][0x12] = 1;
         reset_polls = 0;
     } else if (!(reject_config && !bank && addr == 0x10) &&
-               !(reject_highg && !bank && addr == 0x4e)) {
+               !(reject_highg && !bank && addr == 0x4e) &&
+               !(reject_reg && !bank && addr==reject_reg)) {
         regs[bank][addr] = value;
     }
     return (int)n;
@@ -78,6 +80,7 @@ static void device(uint8_t id) {
     queue_size = queue_index = 0;
     writes = highg_writes = reset_polls = sleeps = transient_reads = 0;
     reset_stuck = reject_config = short_transfer = short_fifo = reject_highg = false;
+    reject_reg=0;
 }
 #define CHECK(condition) do { if (!(condition)) return __LINE__; } while (0)
 
@@ -108,12 +111,29 @@ int imu_driver_test(void) {
         CHECK(highg_writes == model);
         CHECK(regs[0][0x10] == 6 && regs[0][0x17] == 0 && regs[0][0x12] == 0x44);
         CHECK(sleeps >= 60);
+        const uint8_t wake_regs[]={0x0e,0x13,0x17,0x50,0x54,0x56,0x5b,0x5c,0x5f};
+        const uint8_t wake_values[]={0,0,0,0x80,0x20,0x21,6,0,0x20};
+        uint8_t saved[sizeof wake_regs];
+        for(unsigned i=0;i<sizeof wake_regs;i++) {
+            saved[i]=(uint8_t)(i+1); regs[0][wake_regs[i]]=saved[i];
+        }
         CHECK(lsm6dsv_idle_start());
         CHECK(regs[0][0x10]==0x42 && regs[0][0x11]==0 && regs[0][0x17]==0);
+        for(unsigned i=0;i<sizeof wake_regs;i++) CHECK(regs[0][wake_regs[i]]==wake_values[i]);
         CHECK(!lsm6dsv_gyro_start() && !lsm6dsv_fifo_start() && !lsm6dsv_orientation_start());
         unsigned idle_writes=writes;
         CHECK(lsm6dsv_idle_start() && writes==idle_writes);
         CHECK(lsm6dsv_idle_end() && regs[0][0x10]==6 && regs[0][0x11]==0);
+        for(unsigned i=0;i<sizeof wake_regs;i++) {
+            CHECK(regs[0][wake_regs[i]]==saved[i]); regs[0][wake_regs[i]]=0;
+        }
+        // A failed motion route/threshold/filter write rolls back every register.
+        for(unsigned i=3;i<sizeof wake_regs;i++) {
+            if (!wake_values[i]) continue;
+            reject_reg=wake_regs[i]; CHECK(!lsm6dsv_idle_start()); reject_reg=0;
+            CHECK(lsm6dsv_idle_end() && regs[0][0x10]==6);
+            for(unsigned j=0;j<sizeof wake_regs;j++) CHECK(regs[0][wake_regs[j]]==0);
+        }
         // Failed entry must restore normal live mode; failed wake may be retried.
         reject_config=true;
         CHECK(!lsm6dsv_idle_start());

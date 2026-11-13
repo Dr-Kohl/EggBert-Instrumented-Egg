@@ -96,5 +96,10 @@ int16_t calibration_correct_axis(int16_t raw,unsigned axis,uint32_t scale) {
 bool stdio_usb_connected(void) { return test_usb_connected; }
 bool lsm6dsv_idle_start(void) { ++test_idle_starts; return test_idle_ok; }
 bool lsm6dsv_idle_end(void) { ++test_idle_ends; return test_wake_ok; }
+unsigned test_sleep_begins, test_sleep_ends, test_sleep_reason;
+uint32_t test_sleep_delay;
+void processor_sleep_begin(void) { ++test_sleep_begins; }
+void processor_sleep_end(void) { ++test_sleep_ends; }
+unsigned processor_sleep_wait(uint32_t ms) { test_sleep_delay=ms; return test_sleep_reason; }
 
 int64_t absolute_time_diff_us(absolute_time_t from, absolute_time_t to) { return ((int64_t)to-(int64_t)from)*1000; }

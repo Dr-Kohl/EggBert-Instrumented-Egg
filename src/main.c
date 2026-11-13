@@ -27,6 +27,7 @@
 #include "calibration.h"
 #include "hammer_trigger.h"
 #include "idle_power.h"
+#include "processor_sleep.h"
 #include "pico/stdlib.h"
 #include "pico/stdio_usb.h"
 #include "ssd1306.h"
@@ -133,6 +134,8 @@ static bool oled_ok;
 static idle_power_t idle_power;
 static bool idle_standby, idle_wake_buttons;
 static uint32_t idle_started_ms;
+static uint32_t idle_entries;
+static unsigned idle_last_wake_reason;
 #define IDLE_RECORD_LED_PERIOD_MS 5000u
 #define IDLE_RECORD_LED_PULSE_MS   100u
 static uint16_t power_out_millivolts;
@@ -554,7 +557,7 @@ static void show_ui(void) {
     if (app_current()) app_draw(); else capture_app_draw();
 }
 
-// Stage one is cooperative standby. RAM, the capture buffers, and USB stay on.
+// Retained-RAM standby: sensor interrupt wake and processor clock gating.
 static void update_status_leds(bool imu_ok);
 static bool wake_idle(void) {
     if (!idle_standby) return true;
@@ -563,6 +566,7 @@ static bool wake_idle(void) {
         return false;
     }
     idle_standby = false;
+    processor_sleep_end();
     ui_set_display_available(oled_ok);
     idle_power_init(&idle_power, to_ms_since_boot(get_absolute_time()));
     level_filter_initialized = false;
@@ -596,10 +600,27 @@ static void service_idle_power(bool buttons_down) {
         return;
     }
     idle_standby = true;
+    ++idle_entries;
+    processor_sleep_begin();
     idle_started_ms = to_ms_since_boot(get_absolute_time());
     update_status_leds(true);
     ui_set_display_available(false);
-    printf("Power: standby; press any button to wake. Recording RAM retained.\n");
+    printf("Power: standby; shake or press any button to wake. Recording RAM retained.\n");
+}
+
+static void service_idle_sleep(void) {
+    if (!idle_standby) return;
+    uint32_t delay=IDLE_RECORD_LED_PERIOD_MS;
+    if (capture_complete && capture_count>0) {
+        uint32_t phase=(to_ms_since_boot(get_absolute_time())-idle_started_ms)%IDLE_RECORD_LED_PERIOD_MS;
+        delay=phase<IDLE_RECORD_LED_PULSE_MS ? IDLE_RECORD_LED_PULSE_MS-phase : IDLE_RECORD_LED_PERIOD_MS-phase;
+    }
+    unsigned reason=processor_sleep_wait(delay);
+    if (reason) {
+        idle_last_wake_reason=reason;
+        if (reason & PROCESSOR_WAKE_BUTTON) idle_wake_buttons=true;
+        if (!wake_idle()) sleep_ms(100); // bound retries after hardware failure
+    }
 }
 
 bool app_host_can_open(void) { return !idle_standby && !capture_active && !orientation_fused; }
@@ -655,9 +676,11 @@ static const char *capture_state_name(void) {
 }
 
 static void print_capture_status(void) {
-    printf("Firmware: eggbert-integrated-h7-idle2 (2026-11-13).\n");
-    printf("Power: %s; idle timeout %lu ms; stage 1, button wake.\n",
+    printf("Firmware: eggbert-integrated-h8-sleep (2026-11-13).\n");
+    printf("Power: %s; idle timeout %lu ms; stage 2, processor sleep, button/motion/USB wake.\n",
            idle_standby ? "STANDBY" : "awake", (unsigned long)IDLE_TIMEOUT_MS);
+    printf("Sleep entries: %lu; last wake mask: %u (button=1, motion=2, USB=4).\n",
+           (unsigned long)idle_entries,idle_last_wake_reason);
     printf("IMU: %s, WHO_AM_I=0x%02X, stored high-g: %s, OLED: %s\n",
            lsm6dsv_model_name(), lsm6dsv_device_id(), capture_has_highg ? "yes" : "no",
            oled_ok ? "OK" : "NOT FOUND");
@@ -1603,6 +1626,7 @@ static void handle_serial_command(void) {
     int character;
     while ((character = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
         idle_power_activity(&idle_power, to_ms_since_boot(get_absolute_time()));
+        if (idle_standby) idle_last_wake_reason=PROCESSOR_WAKE_USB;
         if (!wake_idle()) { length=0; continue; }
         if (character == '\r' || character == '\n') {
             if (length == 0) continue;
@@ -1723,7 +1747,7 @@ void capture_app_button(unsigned button) {
 
 static void handle_button_press(unsigned button) {
     idle_power_activity(&idle_power, to_ms_since_boot(get_absolute_time()));
-    if (idle_standby) { wake_idle(); idle_wake_buttons=true; return; }
+    if (idle_standby) { idle_last_wake_reason=PROCESSOR_WAKE_BUTTON; wake_idle(); idle_wake_buttons=true; return; }
     if (idle_wake_buttons) return; // consume the entire waking press/chord
     if (orientation_fused) { stop_orientation(); printf("ORIENTATION STOPPED: device menu\n"); }
     if (capture_active) {
@@ -1833,6 +1857,7 @@ int main(void) {
             next_imu_report = make_timeout_time_ms(app_sample_period_ms());
         }
         service_idle_power(pressed != 0);
-        sleep_ms(idle_standby ? 20 : capture_active || orientation_fused || (app_current() && app_current()->fast_tick) ? 1 : 10);
+        if (idle_standby) service_idle_sleep();
+        else sleep_ms(capture_active || orientation_fused || (app_current() && app_current()->fast_tick) ? 1 : 10);
     }
 }

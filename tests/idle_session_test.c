@@ -73,5 +73,22 @@ int main(void) {
     assert(app_open(test_app_index("acceleration")));
     test_now+=IDLE_TIMEOUT_MS; service_idle_power(false); assert(idle_standby);
     assert(wake_idle() && app_current()==&acceleration_app);
+    // Timer wakes service only the recording reminder; motion/USB wake the
+    // same view. Short button IRQs are consumed even if released before polling.
+    for (unsigned reason=0;reason<4;reason++) {
+        fresh_home(); capture_complete=true; capture_count=123;
+        test_now+=IDLE_TIMEOUT_MS; service_idle_power(false);
+        assert(idle_standby && test_sleep_begins>0);
+        test_sleep_reason=0; service_idle_sleep();
+        assert(idle_standby && test_sleep_delay==100);
+        test_now+=100; service_idle_sleep();
+        assert(idle_standby && test_sleep_delay==4900);
+        test_sleep_reason=reason==0 ? PROCESSOR_WAKE_MOTION : reason==1 ? PROCESSOR_WAKE_USB :
+                          reason==2 ? PROCESSOR_WAKE_BUTTON : PROCESSOR_WAKE_BUTTON|PROCESSOR_WAKE_MOTION;
+        service_idle_sleep(); assert(!idle_standby && test_sleep_ends>0);
+        assert(idle_wake_buttons==(reason>=2));
+        assert(!app_current() && capture_count==123 && capture_complete);
+        for(size_t i=0;i<sizeof capture_samples;i++) assert(((uint8_t*)capture_samples)[i]==0x35);
+    }
     return 0;
 }
