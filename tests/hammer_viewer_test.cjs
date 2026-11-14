@@ -32,7 +32,7 @@ context.bytes=demo;
 header.setUint32(28,run('crc32(bytes.subarray(80))'),true);
 header.setUint32(76,run('crc32(bytes.subarray(0,76))'),true);
 run('displayCapture(bytes); selectSensor("low"); chartMode="axes"; verticalScale="32"; setAnalysisView("hammer")');
-assert.equal(elements.get('#triggerType').textContent,'Impact Â· Low-g clipped');
+assert.equal(elements.get('#triggerType').textContent,'Impact · Low-g clipped');
 assert.equal(run('sensorSource'),'high'); assert.equal(run('chartMode'),'magnitude');
 assert.equal(elements.get('#hammerTime').textContent,'120.3 ms');
 assert.equal(elements.get('#hammerPeak').textContent,'36.4 g');

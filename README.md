@@ -613,7 +613,7 @@ Older firmware retains a tilt-only fallback. See `ORIENTATION_PROTOCOL.md`.
 
 ## Deliberate exclusions
 
-GPIO16â€“21 are reserved for the LSM6DSV IMU; GPIO29 is the OUT+ voltage sense;
+GPIO16–21 are reserved for the LSM6DSV IMU; GPIO29 is the OUT+ voltage sense;
 the QSPI pins are flash signals. This bring-up project does not drive them.
 
 ### Step 4: automatic acceleration selection
