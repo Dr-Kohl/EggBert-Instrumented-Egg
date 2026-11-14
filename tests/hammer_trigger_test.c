@@ -108,22 +108,42 @@ int hammer_trigger_test(void) {
     // Microsecond clock wrap behaves like an ordinary fresh interval.
     clock_us=UINT32_MAX-10000u;
     CHECK(arm(&h));
-    // Launch behavior and its original acceleration sample clock are retained.
-    feed(&h,0,0,16000,HAMMER_MS(10)); feed(&h,0,0,0,HAMMER_MS(100));
-    feed(&h,0,0,2048,HAMMER_MS(30)); CHECK(h.phase==HAMMER_ARMED);
-    feed(&h,0,0,16000,HAMMER_MS(10)); feed(&h,0,0,0,HAMMER_MS(200)-1u);
-    CHECK(h.phase==HAMMER_LAUNCH);
-    CHECK(hammer_sample(&h,0,0,0)==HAMMER_TRIGGERED && h.phase==HAMMER_RECORDING);
-    CHECK(h.launch_at-h.trigger_at==1u && h.seq-h.trigger_at==HAMMER_MS(200));
-    CHECK(arm(&h)); feed(&h,0,0,5000,1); feed(&h,0,0,0,HAMMER_MS(100));
-    feed(&h,0,0,2048,10);
-    CHECK(feed(&h,0,0,0,HAMMER_MS(100))==HAMMER_TRIGGERED);
-    CHECK(arm(&h)); feed(&h,0,0,5000,1); feed(&h,0,0,0,HAMMER_MS(100));
-    feed(&h,0,0,2048,HAMMER_MS(6)); CHECK(h.phase==HAMMER_ARMED);
+    // Supported handling, lower impacts and flight alone do not trigger.
+    CHECK(arm(&h));
+    feed(&h,0,0,2048,HAMMER_MS(1000));
+    feed(&h,0,0,14000,HAMMER_MS(100));
+    feed(&h,0,0,0,HAMMER_MS(500)); CHECK(h.phase==HAMMER_ARMED);
+    // Strict >7 g boundary, either sign and any axis. A single sample suffices.
+    for (unsigned axis=0;axis<3;++axis) for (int sign=-1;sign<=1;sign+=2) {
+        CHECK(arm(&h)); int16_t v[3]={0};
+        v[axis]=(int16_t)(sign*14335);
+        CHECK(hammer_sample(&h,v[0],v[1],v[2])==HAMMER_NONE);
+        v[axis]=(int16_t)(sign*14336);
+        CHECK(hammer_sample(&h,v[0],v[1],v[2])==HAMMER_NONE);
+        v[axis]=(int16_t)(sign*14337);
+        CHECK(hammer_sample(&h,v[0],v[1],v[2])==HAMMER_TRIGGERED);
+        CHECK(h.phase==HAMMER_RECORDING && h.trigger_at==h.seq);
+        // No flight after the hit, and later hits cannot retrigger.
+        CHECK(feed(&h,0,0,2048,HAMMER_MS(500))==HAMMER_NONE);
+        CHECK(hammer_sample(&h,32767,-32768,32767)==HAMMER_NONE);
+    }
+    // Vector threshold: no individual axis needs to exceed 7 g.
+    CHECK(arm(&h)); CHECK(hammer_sample(&h,8192,8192,8192)==HAMMER_NONE);
+    CHECK(hammer_sample(&h,8500,-8500,8500)==HAMMER_TRIGGERED);
+    CHECK(arm(&h)); CHECK(hammer_sample(&h,-32768,-32768,-32768)==HAMMER_TRIGGERED);
+    // Impacts before arming cannot start or prequalify a recording.
+    begin(&h);
+    for (unsigned phase=HAMMER_TURN;phase<HAMMER_ARMED;++phase) {
+        h.phase=(hammer_phase_t)phase;
+        CHECK(hammer_sample(&h,32767,0,0)==HAMMER_NONE);
+    }
     CHECK(arm(&h)); h.seq=h.armed_at+120u*HAMMER_HZ-2u;
     CHECK(hammer_sample(&h,0,0,2048)==HAMMER_NONE);
     CHECK(hammer_sample(&h,0,0,2048)==HAMMER_TIMED_OUT && !h.turns && h.phase==HAMMER_TURN);
-    // Arming cannot borrow an impact from the gesture as the launch impulse.
+    // Timeout still takes precedence, even at the impact threshold.
+    CHECK(arm(&h)); h.seq=h.armed_at+120u*HAMMER_HZ-1u;
+    CHECK(hammer_sample(&h,32767,0,0)==HAMMER_TIMED_OUT);
+    // An earlier gesture impact cannot make flight alone trigger after arming.
     CHECK(arm(&h)); feed(&h,0,0,0,HAMMER_MS(250)); CHECK(h.phase==HAMMER_ARMED);
     return 0;
 }

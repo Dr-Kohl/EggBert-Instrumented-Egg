@@ -974,7 +974,7 @@ static void start_capture(bool hammer_mode) {
     if (hammer_mode) {
         hammer_display_ms=to_ms_since_boot(get_absolute_time());
         sound_play(SOUND_READY); show_hammer();
-        printf("HAMMER H4: turn once, turn back, then pause comfortably two seconds. Any axis. Not armed yet.\n");
+        printf("HAMMER " EGGBERT_FIRMWARE_VERSION ": turn once, turn back, then pause comfortably two seconds. Any axis. Not armed yet.\n");
     } else {
         show_capture_wait_still();
         printf("Capture armed from EggBert menu: hold still for one second, then wait for freefall or impact.\n");
@@ -1340,23 +1340,23 @@ static void handle_hammer_event(hammer_event_t event) {
     if (event == HAMMER_TRIGGERED) {
         lsm6dsv_gyro_stop(); hammer_gyro_running=false;
         uint32_t after=hammer.seq-hammer.trigger_at;
-        // Confirmation arrives after flight: retain history relative to the
-        // original impact, not to the confirmation sample 200+ ms later.
+        // Keep the half-second history and the threshold-crossing impact.
         trigger_index=(capture_write_index+CAPTURE_MAX_SAMPLES-1u-after)%CAPTURE_MAX_SAMPLES;
         size_t keep=capture_pretrigger+1u+after;
         if (keep>capture_count) keep=capture_count;
         capture_oldest_index=(capture_write_index+CAPTURE_MAX_SAMPLES-keep)%CAPTURE_MAX_SAMPLES;
         capture_count=keep;
         post_trigger_samples=after;
-        trigger_detected=trigger_was_freefall=true;
+        trigger_detected=true;
+        trigger_was_freefall=false;
         capture_state=CAPTURE_POST_EVENT;
         sound_stop(); sound_play(SOUND_RECORDING);
-        printf("HAMMER TRIGGER: >=200 ms flight confirmed; preserving original launch and landing.\n");
+        printf("HAMMER TRIGGER: impact above 7 g; preserving pre-hit history and recording.\n");
     } else if (event == HAMMER_BECAME_ARMED) {
         capture_state=CAPTURE_WAIT_EVENT;
         hammer_armed_ms=hammer_tick_ms=to_ms_since_boot(get_absolute_time());
         sound_stop(); sound_play(SOUND_HAMMER_ARMED);
-        printf("HAMMER ARMED: two minutes; waiting for impact followed by >=200 ms flight.\n");
+        printf("HAMMER ARMED: two minutes; handle gently, waiting for impact above 7 g.\n");
     } else if (event == HAMMER_TURN_ACCEPTED) {
         sound_play(SOUND_TOSS);
         printf("HAMMER: turn %u/2 accepted. %s\n",hammer.turns,
@@ -1408,7 +1408,7 @@ static void service_hammer(void) {
             return;
         }
     }
-    if (hammer.phase == HAMMER_ARMED || hammer.phase == HAMMER_LAUNCH) {
+    if (hammer.phase == HAMMER_ARMED) {
         if (now-hammer_armed_ms>=120000u) {
             handle_hammer_event(hammer_restart(&hammer,HAMMER_TIMED_OUT));
         } else if (now-hammer_tick_ms>=1000u) {
