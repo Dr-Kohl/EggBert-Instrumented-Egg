@@ -1,3 +1,33 @@
+## H8.2 update (November 13, 2026)
+
+Keep the successful turn/back/pause arming gesture. Once armed, the first
+calibrated low-g vector magnitude strictly above 7 g starts recording, with
+no flight or minimum pulse-duration requirement. This replaces the earlier
+1.5 g impact followed within 150 ms by 200 ms of near-weightlessness.
+The armed tick stops and the recording cue plays on acceptance (when sound
+is enabled). Handle the package gently after arming; a placement bump above
+7 g can trigger too. The two-minute timeout and accessible middle-button
+cancel remain. Before arming, impacts cannot start or prequalify a capture.
+
+The same 19,200-sample window retains 0.5 seconds before threshold crossing
+and 4.5 seconds including/after it. Downloads mark Impact, not confirmed
+Freefall. No file-format or buffer-size change. Completed recordings remain
+protected. Settings and serial status identify H8.2.
+
+Tests cover the exact threshold, signed axes, diagonal vector magnitude,
+single-sample hits without subsequent flight, lower handling acceleration,
+pre-arm impacts, timeout, both V1/V2 recording windows, metadata and scores.
+Validation passed: six Hammer native suites; full native app/settings/idle
+suite; 71 rendered UI states with zero text overflows and 52 unchanged activity
+snapshots; capture-format, dual-stream viewer, Hammer viewer and orientation
+tests. The actual C trigger accepted the initial strike in all three supplied
+representative trials (red bubble wrap, extra bubble wrap and foam).
+Production ELF built on this PC with installed Arduino Pico SDK
+2.2.1-develop / arm-none-eabi GCC 14.3.0; this differs from H8.1's documented
+SDK 2.3.1 / GCC 15.2 environment. No board was flashed or tested with H8.2.
+Physical wrapped-package/handling trials with H8.2 remain necessary.
+The older sections below document prior builds and validation.
+
 ## H5 update (November 11, 2026)
 
 The first five Home entries are HAMMER HIT, RECORD, ACCEL G, GYRO, MAZE.

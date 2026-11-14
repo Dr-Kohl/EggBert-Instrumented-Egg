@@ -1,7 +1,7 @@
 """Extract actual firmware recording functions for ARM buffer/score tests.
 
 Only hardware/UI are stubbed. Covers both board formats, long circular waits,
-delayed trigger confirmation, exact pre/post lengths and high-g/clipping scores.
+immediate impact triggering, exact pre/post lengths and high-g/clipping scores.
 Run from the checkout; output is build/hammer-capture-test.c.
 """
 from pathlib import Path
@@ -91,6 +91,7 @@ int hammer_capture_test(void) {
         hammer_reset(&hammer);
         capture_active=capture_is_hammer=true;
         capture_complete=trigger_detected=capture_clipped=false;
+        trigger_was_freefall=true; // must be cleared by impact detection
         capture_has_highg=version==2;
         capture_count=capture_oldest_index=capture_write_index=post_trigger_samples=0;
         for (unsigned a=0;a<3;++a) capture_metadata.scale_q16[a]=65536u;
@@ -108,15 +109,14 @@ int hammer_capture_test(void) {
         feed(2048,96,40u*HAMMER_HZ); // wrap ring many times while armed
         feed(6000,281,1); feed(0,0,HAMMER_MS(100)); feed(2048,96,HAMMER_MS(600));
         if (trigger_detected) return 30+version;
-        feed(30000,2000,HAMMER_MS(10));
-        feed(0,0,HAMMER_MS(200)-1u);
-        if (trigger_detected) return 40+version;
-        feed(0,0,1);
-        if (!trigger_detected || capture_count!=PRE_TRIGGER_SAMPLES+1u+HAMMER_MS(200) ||
-            post_trigger_samples!=HAMMER_MS(200)) return 50+version;
+        feed(30000,2000,1); // a single impact starts recording, without flight
+        if (!trigger_detected || trigger_was_freefall ||
+            capture_count!=PRE_TRIGGER_SAMPLES+1u || post_trigger_samples!=0 ||
+            last_sound!=SOUND_RECORDING || hammer_gyro_running) return 50+version;
         if ((trigger_index+CAPTURE_MAX_SAMPLES-capture_first_index())%CAPTURE_MAX_SAMPLES!=PRE_TRIGGER_SAMPLES)
             return 60+version;
-        feed(0,0,HAMMER_MS(194));
+        feed(30000,2000,HAMMER_MS(10)-1u);
+        feed(2048,96,HAMMER_MS(194)); // supported throughout: no flight needed
         feed(32767,3000,HAMMER_MS(10));
         feed(2048,96,POST_TRIGGER_SAMPLES-post_trigger_samples-1u);
         if (!capture_active) return 70+version;
@@ -124,7 +124,7 @@ int hammer_capture_test(void) {
         if (!capture_complete || capture_active || capture_count!=19200u || post_trigger_samples!=17279u)
             return 80+version;
         if (capture_sample_at(0)->z!=2048 || capture_sample_at(1920)->z!=30000 ||
-            capture_sample_at(1921)->z!=0 || capture_sample_at(19199)->z!=2048) return 90+version;
+            capture_sample_at(1921)->z!=30000 || capture_sample_at(19199)->z!=2048) return 90+version;
         if (version==2 && (hammer_peak_mg!=31251u || hammer_limit_unknown || hammer_over20_samples!=2u*HAMMER_MS(10))) return 100+version;
         if (version==1 && (!hammer_limit_unknown || !capture_clipped)) return 110+version;
     }

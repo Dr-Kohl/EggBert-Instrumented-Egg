@@ -1,19 +1,22 @@
-## Current firmware: H8.1 (November 13, 2026)
+## Current firmware: H8.2 (November 13, 2026)
 
-For batch programming, download `eggbert_bringup.elf` and `SHA256SUMS.txt` from
-[release h8.1](https://github.com/Dr-Kohl/EggBert-Instrumented-Egg/releases/tag/h8.1).
-H8.1 adds the read-only **FW H8.1** line in Settings to the five-minute sleep build.
+H8.2 changes only Hammer Hit detection: after the unchanged turn/back/pause
+gesture, the first calibrated vector magnitude above 7 g starts recording.
+Flight confirmation is no longer required. Handle gently while the armed tick
+is sounding; a placement bump above the threshold can also trigger.
+Build the current source as described below, or use an H8.2 ELF supplied with
+its SHA256SUMS.txt. Do not substitute the earlier H8.1 release for this change.
 Keep that same file for every board; plug in one EggBert at a time and use the
 Picotool procedure below, substituting the downloaded ELF's path for
 `build\eggbert_bringup.elf`. No local rebuild is needed when using the release ELF.
 Compare `Get-FileHash <downloaded-elf-path> -Algorithm SHA256` with SHA256SUMS.txt.
 
-After programming, open Settings and confirm **FW H8.1**. Serial `status` must identify `eggbert-integrated-H8.1`
+After programming, open Settings and confirm **FW H8.2**. Serial `status` must identify `eggbert-integrated-H8.2`
 and report `idle timeout 300000 ms`. The device sleeps after five minutes of
 inactivity; shake or press any button to wake. The first press only wakes.
 Recordings survive sleep; flashing or power-off clears them, so download first.
 Close serial monitors when testing the timeout: open CDC sessions inhibit sleep.
-All 15 ARM regression suites passed. V2 shake wake and recording retention were
+Prior H8.1 validation: all 15 ARM regression suites passed. V2 shake wake and recording retention were
 physically confirmed; V1 physical sleep/wake testing remains pending.
 See LOW_POWER_DESIGN.md for details.
 
@@ -48,7 +51,7 @@ Use this procedure for every JLCPCB Instrumented Egg / EggBert board. It is inte
 - Branch `master` combines Caleb's modular apps/settings with Hammer Hit and
   gyro arming, and includes the shared version 1/version 2 firmware.
   Build and flash from this checkout for Hammer Hit work. Firmware `status`
-  identifies the current build as `eggbert-integrated-H8.1`.
+  identifies the current build as `eggbert-integrated-H8.2`.
 - The earlier checkout at `C:\Users\Kohlc\OneDrive - Cedarville University\Documents\ChatGPT\EggBert Instrumented Egg`
   has unfinished local changes; preserve them. Confirm the checkout and changes
   with `git log -1` and `git status` before building or programming.

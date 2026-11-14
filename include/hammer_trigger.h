@@ -10,9 +10,10 @@
 #define HAMMER_TURN_DEGREES 270.0f
 #define HAMMER_TURN_TIMEOUT_US 6000000u
 #define HAMMER_PAUSE_TIMEOUT_US 8000000u
+#define HAMMER_IMPACT_COUNTS (7u * 2048u)
 typedef enum {
     HAMMER_TURN, HAMMER_REVERSE, HAMMER_FINAL_SETTLE,
-    HAMMER_ARMED, HAMMER_LAUNCH, HAMMER_RECORDING
+    HAMMER_ARMED, HAMMER_RECORDING
 } hammer_phase_t;
 typedef enum {
     HAMMER_NONE, HAMMER_RESET, HAMMER_TURN_ACCEPTED, HAMMER_BECAME_ARMED,
@@ -20,12 +21,11 @@ typedef enum {
 } hammer_event_t;
 typedef struct {
     hammer_phase_t phase;
-    uint32_t seq, phase_at, armed_at, flight, gap, gaps;
-    uint32_t impulse_at, launch_at, trigger_at;
+    uint32_t seq, phase_at, armed_at, trigger_at;
     uint32_t gyro_at_us, gesture_us, quiet_us, quiet_gap_us;
     float turn[3], direction[3], reverse_degrees, travel_degrees;
     uint8_t turns;
-    bool impulse_valid, gyro_valid, supported;
+    bool gyro_valid, supported;
 } hammer_trigger_t;
 
 static inline uint64_t hammer_mag2(int32_t x, int32_t y, int32_t z) {
@@ -36,7 +36,6 @@ static inline void hammer_reset(hammer_trigger_t *h) {
 }
 static inline void hammer_phase(hammer_trigger_t *h, hammer_phase_t phase) {
     h->phase = phase; h->phase_at = h->seq;
-    h->flight = h->gap = h->gaps = 0;
 }
 static inline hammer_event_t hammer_restart(hammer_trigger_t *h, hammer_event_t event) {
     uint32_t seq=h->seq;
@@ -71,7 +70,6 @@ static inline hammer_event_t hammer_gyro_sample(hammer_trigger_t *h,
         }
         if (h->quiet_us>=2000000u) {
             hammer_phase(h,HAMMER_ARMED); h->armed_at=h->seq;
-            h->impulse_valid=false;
             return HAMMER_BECAME_ARMED;
         }
         if (h->gesture_us>HAMMER_PAUSE_TIMEOUT_US)
@@ -106,38 +104,21 @@ static inline hammer_event_t hammer_gyro_sample(hammer_trigger_t *h,
     return HAMMER_NONE;
 }
 
-// Launch detection/window timing remain on the acceleration FIFO sample clock.
+// Only an armed impact above 7 g starts recording. No flight or pulse-duration
+// requirement: padding/rotation must not reject a real strike. Magnitude uses
+// all calibrated low-g axes, on the unchanged acceleration FIFO sample clock.
 static inline hammer_event_t hammer_sample(hammer_trigger_t *h, int16_t x, int16_t y, int16_t z) {
     ++h->seq;
     uint64_t m=hammer_mag2(x,y,z);
     h->supported=m>=1331ull*1331u && m<=2867ull*2867u; // 0.65--1.4 g
-    bool freefall=m < 922ull*922u;
-    bool impulse=m > 3072ull*3072u;
-    if (impulse && h->phase != HAMMER_LAUNCH) {
-        h->impulse_at=h->seq; h->impulse_valid=true;
-    }
     if (h->phase == HAMMER_RECORDING) return HAMMER_NONE;
-    if ((h->phase == HAMMER_ARMED || h->phase == HAMMER_LAUNCH) &&
-        h->seq-h->armed_at >= HAMMER_HZ*120u)
+    if (h->phase == HAMMER_ARMED && h->seq-h->armed_at >= HAMMER_HZ*120u)
         return hammer_restart(h,HAMMER_TIMED_OUT);
-    switch (h->phase) {
-    case HAMMER_ARMED:
-        if (freefall && h->impulse_valid && h->seq-h->impulse_at <= HAMMER_MS(150)) {
-            h->trigger_at=h->impulse_at; h->launch_at=h->seq;
-            hammer_phase(h,HAMMER_LAUNCH); h->flight=1;
-        }
-        break;
-    case HAMMER_LAUNCH:
-        if (freefall) { ++h->flight; h->gap=0; }
-        else { ++h->gap; ++h->gaps; }
-        if (h->gap > HAMMER_MS(5) || h->gaps > HAMMER_MS(10)) {
-            hammer_phase(h,HAMMER_ARMED); h->impulse_valid=false;
-        } else if (h->flight >= HAMMER_MS(200)) {
-            hammer_phase(h,HAMMER_RECORDING);
-            return HAMMER_TRIGGERED;
-        }
-        break;
-    default: break;
+    if (h->phase == HAMMER_ARMED &&
+        m > (uint64_t)HAMMER_IMPACT_COUNTS * HAMMER_IMPACT_COUNTS) {
+        h->trigger_at=h->seq;
+        hammer_phase(h,HAMMER_RECORDING);
+        return HAMMER_TRIGGERED;
     }
     return HAMMER_NONE;
 }

@@ -1,11 +1,17 @@
 # EggBert RP2354A board bring-up
 
-## Latest firmware: H8.1 (November 13, 2026)
+## Latest firmware: H8.2 (November 13, 2026)
 
-[Download the firmware and checksum](https://github.com/Dr-Kohl/EggBert-Instrumented-Egg/releases/tag/h8.1).
-Program `eggbert_bringup.elf` using [the programming guide](PROGRAMMING_EGGBERT.md).
-Settings displays **FW H8.1** so boards can be checked without a computer.
-Serial `status` must identify `eggbert-integrated-H8.1` and report
+H8.2 keeps the turn/back/pause arming gesture and triggers Hammer Hit on the
+first calibrated acceleration vector magnitude **above 7 g**, in any direction.
+No flight, near-weightlessness or minimum impact duration is required. After
+the armed melody, handle the wrapped package gently and listen for the tick;
+the recording cue replaces ticking when a hit is accepted. Sound must be enabled
+for these audible signals. Silence alone is not proof of a completed capture.
+
+Build `eggbert_bringup.elf` using [the programming guide](PROGRAMMING_EGGBERT.md).
+Settings displays **FW H8.2** so boards can be checked without a computer.
+Serial `status` must identify `eggbert-integrated-H8.2` and report
 `idle timeout 300000 ms` (five minutes).
 
 After five minutes of inactivity, the display turns off and the processor sleeps
@@ -13,7 +19,7 @@ with recordings retained in RAM. Shake, press any button, or connect a USB seria
 host to wake the same screen. The first button press only wakes the device.
 A saved recording gets a brief red reminder pulse every five seconds during
 standby; otherwise status LEDs are off. Active experiments and open USB serial
-sessions stay awake. All 15 ARM regression suites passed; V2 sleep, shake wake
+sessions stay awake. Prior H8.1 validation: all 15 ARM regression suites passed; V2 sleep, shake wake
 and recording retention were physically confirmed. Shared V1/V2 sensor paths
 are regression-tested; V1 physical sleep/wake testing remains pending. See
 [low-power design and physical test procedure](LOW_POWER_DESIGN.md).
@@ -70,16 +76,18 @@ Fresh gyro and recent accelerometer readings are required. These are starting
 thresholds to test with the actual wrapped package, not a guarantee against
 every possible wrapping motion. Finish wrapping before deliberately arming.
 
-Once armed, an impact (>1.5 g) followed within 150 ms by at least 200 ms below
-0.45 g confirms a launch. Up to 5 ms per interruption and 10 ms total are
-allowed; the detector still requires 200 ms of actual near-weightlessness.
-Bumps without confirmed flight are ignored. Two minutes without confirmation
+Once armed, the first calibrated low-g vector magnitude above 7 g starts
+recording immediately. Exactly 7 g does not trigger; any direction or sign
+can qualify, and a single sample is enough. H8.2 removes the earlier 1.5 g
+impact / 150 ms transition / 200 ms flight sequence. Handle gently after
+arming: a placement bump above 7 g can also trigger. Impacts during the arming
+gesture cannot start a recording. Two minutes without an accepted impact
 plays a descending timeout cue and requires the turn/back/pause gesture again. The middle
 button cancels before confirmation; buttons cannot interrupt a confirmed event.
 
-The existing 19,200-sample circular buffer retains 0.5 seconds before the launch
-candidate plus 4.5 seconds including/after it, at 3840 Hz. Delayed confirmation
-does not shift the window or lose the strike. The two-minute waiting period
+The existing 19,200-sample circular buffer retains 0.5 seconds before the first
+above-threshold impact plus 4.5 seconds including/after it, at 3840 Hz. The
+impact is marked as Impact, with no freefall-confirmed flag. The two-minute waiting period
 does not allocate more storage. V2 retains both XYZ streams (230,400 bytes);
 V1 uses low-g only. Existing EGG2/EGG1 downloads and recording protection work
 unchanged. Recording is RAM-only: download before power-off or reflashing.
