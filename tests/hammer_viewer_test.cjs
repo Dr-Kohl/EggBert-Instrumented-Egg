@@ -38,6 +38,11 @@ assert.equal(elements.get('#hammerTime').textContent,'120.3 ms');
 assert.equal(elements.get('#hammerPeak').textContent,'36.4 g');
 assert.equal(elements.get('#axesButton').disabled,true); assert.equal(elements.get('#sensorSource').disabled,true);
 assert.ok(bands.length>0);
+run('amplitudeIndex=2304; drawAll()');
+assert.equal(elements.get('#amplitudeReadout').textContent, run('capture.hammer.magnitude[2304].toFixed(2)+" g"'));
+run('selectSensor("high"); drawAll()');
+assert.equal(elements.get('#amplitudeReadout').textContent, run('capture.hammer.magnitude[2304].toFixed(2)+" g"'));
+
 run('setView(2,0.1)'); assert.equal(elements.get('#hammerTime').textContent,'120.3 ms');
 run('setAnalysisView("normal")'); assert.equal(run('sensorSource'),'low'); assert.equal(run('chartMode'),'axes'); assert.equal(run('verticalScale'),'32');
 assert.equal(elements.get('#hammerSummary').hidden,true); assert.equal(elements.get('#axesButton').disabled,false);

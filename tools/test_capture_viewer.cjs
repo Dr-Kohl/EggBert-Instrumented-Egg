@@ -7,7 +7,7 @@ const elements = new Map();
 const ctx = new Proxy({measureText: text => ({width: text.length * 8})}, {get: (obj, key) => obj[key] || (() => {})});
 function element(id) {
   if (!elements.has(id)) elements.set(id, {
-    value: '', classList: {toggle() {}}, style: {}, width: 1000, height: 340,
+    value: '', parentElement: {hidden:false}, classList: {toggle() {}}, style: {}, width: 1000, height: 340,
     options: ['auto','2','4','8','16','fit'].map(value => ({value})),
     listeners: {}, addEventListener(type, fn) {this.listeners[type] = fn;},
     setAttribute() {}, getContext: () => ctx,
@@ -18,7 +18,7 @@ function element(id) {
 }
 const sandbox = vm.createContext({console, Uint8Array, Float32Array, DataView, TextEncoder, TextDecoder,
   document: {querySelector: element}, window: {addEventListener() {}}, navigator: {}});
-vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs/app.js'), 'utf8'), sandbox);
+for (const file of ['hammer.js', 'app.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '../docs', file), 'utf8'), sandbox);
 const run = code => vm.runInContext(code, sandbox);
 const json = code => JSON.parse(run(`JSON.stringify(${code})`));
 const fire = (id, type, event = {}) => element(id).listeners[type]({target: element(id), ...event});
@@ -105,4 +105,41 @@ beamHeader.setInt16(32+480*6,32764,true);
 beamHeader.setUint32(28,run('crc32(beamBytes.slice(32))'),true);
 run('displayCapture(beamBytes)');
 assert.ok(json('detectEvents()').some(event=>event.label.includes('Saturation')));
-console.log(`PASS: ${files} real captures; overview, zoom, scales, cursors, controls, reset; Beam timing, scale, CRC, and event labels.`);
+// The amplitude readout uses the nearest ORIGINAL sample, in physical units.
+run('measuring=false; setChartMode("magnitude"); resetZoom()');
+fire(canvas, 'pointermove', pointer(520));
+const selected = run('amplitudeIndex');
+assert.equal(selected, Math.round((520-58)/924 * run('viewSeconds') * run('capture.sampleRate')));
+assert.equal(element('#amplitudeReadout').textContent, run('capture.magnitude[amplitudeIndex].toFixed(2) + " g"'));
+assert.ok(!element('#amplitudeReadout').textContent.includes(' s'));
+fire(canvas, 'pointermove', pointer(1));
+assert.equal(run('amplitudeIndex'), selected); // leaving the plot retains the value
+run('setChartMode("axes")');
+assert.equal(element('#amplitudeReadout').textContent, run('[capture.x,capture.y,capture.z].map((v,i)=>["X","Y","Z"][i]+": "+v[amplitudeIndex].toFixed(2)+" g").join("   ·   ")'));
+const beforeTouch = run('viewStart');
+fire(canvas, 'pointerdown', {...pointer(200), pointerType:'touch'});
+fire(canvas, 'pointermove', {...pointer(750), pointerType:'touch'});
+fire(canvas, 'pointerup', {...pointer(750), pointerType:'touch'});
+assert.equal(run('viewStart'), beforeTouch); // touch scrubs samples instead of panning
+assert.notEqual(run('amplitudeIndex'), selected);
+const held = run('amplitudeIndex');
+fire(canvas, 'pointerup', {...pointer(750), pointerType:'touch'});
+assert.equal(run('amplitudeIndex'), held);
+run('measuring=true; cursors=[null,null]');
+fire(canvas,'pointerdown',pointer(300)); fire(canvas,'pointermove',pointer(400)); fire(canvas,'pointerup',pointer(400));
+assert.equal(run('cursors[0]'),run('amplitudeIndex'));
+// CSS-scaled canvases still map to original samples accurately.
+const originalBounds=element(canvas).getBoundingClientRect;
+element(canvas).getBoundingClientRect=()=>({left:20,top:10,width:500,height:170});
+run('measuring=false');
+fire(canvas,'pointermove',pointer(20+520/2,10+150/2));
+assert.equal(run('amplitudeIndex'),selected);
+element(canvas).getBoundingClientRect=originalBounds;
+// A narrow peak is read from the original sample even when the overview is reduced.
+run('setChartMode("magnitude"); capture.magnitude[1234]=224.2; resetZoom()');
+fire(canvas,'pointermove',pointer(58+924*(1234/run('capture.sampleRate'))/run('viewSeconds')));
+assert.equal(run('amplitudeIndex'),1234);
+assert.equal(element('#amplitudeReadout').textContent,'224.20 g');
+// New recordings discard the previous sample selection.
+run('displayCapture(beamBytes)'); assert.equal(run('amplitudeIndex'), null);
+console.log(`PASS: ${files} real captures; overview, zoom, scales, cursors, controls, reset, amplitude hover/touch/scaled canvas/peaks; Beam timing, scale, CRC, and event labels.`);

@@ -10,6 +10,7 @@ let orientationHeading = 0, orientationLatest, orientationReady = false;
 let viewStart = 0, viewSeconds = 0, drag, chartMode = "axes";
 let verticalScale = "auto", fittedDomains, fullDomains;
 let measuring = false, cursors = [null, null];
+let amplitudeIndex = null;
 let sensorSource = "low";
 let analysisMode = "normal", normalViewState;
 const PLOT = { left: 58, right: 18, top: 18, bottom: 32 };
@@ -122,7 +123,7 @@ function detectFlight() {
 }
 
 function displayCapture(bytes) {
-  capture = parseEgg(bytes); captureBytes = bytes;
+  capture = parseEgg(bytes); captureBytes = bytes; amplitudeIndex = null;
   capture.hammer=EggHammer.analyze(capture);
   analysisMode="normal"; normalViewState=undefined;
   $("#analysisControls").hidden=false;
@@ -271,7 +272,7 @@ function drawAll() {
   const axes = chartMode === "axes";
   $("#chartTitle").textContent = hammer ? (capture.dual ? "Hammer Hit - high-g magnitude" : "Hammer Hit - low-g magnitude (V1)") : (capture.dual ? (sensorSource==="auto" ? "Automatic - " : sensorSource==="high" ? "High-g · " : "Low-g · ") : "") + (axes ? "Acceleration" : "Acceleration magnitude");
   $("#chartLegend").hidden = !axes;
-  $("#captureChart").setAttribute("aria-label", `${axes ? "Acceleration X, Y, and Z" : "Acceleration magnitude"} in g over time. Scroll to zoom. ${measuring ? "Click to place and drag measurement cursors." : "Drag to pan."}`);
+  $("#captureChart").setAttribute("aria-label", `${axes ? "Acceleration X, Y, and Z" : "Acceleration magnitude"} in g over time. Scroll to zoom. ${measuring ? "Click to place and drag measurement cursors." : "Move to read amplitude. Mouse-drag to pan; touch and slide to inspect."}`);
   drawPlot($("#captureChart"), axes ? [capture.x, capture.y, capture.z] : [hammer ? capture.hammer.magnitude : capture.magnitude], domain, axes ? ["#c33", "#17834d", "#2463c5"] : ["#6240a0"], "g", events);
 }
 
@@ -339,6 +340,45 @@ function drawPlot(canvas, series, domain, colors, unit, events) {
   });
   ctx.restore();
   drawMeasurementCursors(ctx, canvas);
+  drawAmplitude(ctx, canvas, series, domain, colors, unit);
+}
+
+// Resolve against original samples, never the reduced line drawn on screen.
+function inspectAmplitude(canvas, event) {
+  if (!capture) return;
+  const { x, y } = canvasPosition(canvas, event);
+  if (x < PLOT.left || x > canvas.width - PLOT.right || y < PLOT.top || y > canvas.height - PLOT.bottom) return;
+  const index = clamp(Math.round(timeAtPointer(canvas, event) * capture.sampleRate), 0, capture.sampleCount - 1);
+  if (index !== amplitudeIndex) { amplitudeIndex = index; drawAll(); }
+}
+function drawAmplitude(ctx, canvas, series, domain, colors, unit) {
+  const readout = $("#amplitudeReadout");
+  if (amplitudeIndex === null) { readout.textContent = "Move over the graph or touch a point to read its amplitude."; return; }
+  const index = amplitudeIndex;
+  const labels = series.map((values, i) => `${series.length > 1 ? ["X", "Y", "Z"][i] + ": " : ""}${values[index].toFixed(2)} ${unit}`);
+  readout.textContent = labels.join("   ·   ");
+  const time = index / capture.sampleRate;
+  if (time < viewStart || time > viewStart + viewSeconds) return;
+  const width = canvas.width - PLOT.left - PLOT.right, height = canvas.height - PLOT.top - PLOT.bottom;
+  const x = PLOT.left + width * (time - viewStart) / viewSeconds;
+  const yAt = value => PLOT.top + height * (domain[1] - value) / (domain[1] - domain[0]);
+  ctx.save();
+  series.forEach((values, i) => {
+    const y = yAt(values[index]);
+    if (y < PLOT.top || y > canvas.height - PLOT.bottom) return;
+    ctx.beginPath(); ctx.arc(x, y, 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = colors[i]; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
+  });
+  ctx.font = "bold 15px system-ui";
+  const boxWidth = Math.max(...labels.map(label => ctx.measureText(label).width)) + 20;
+  const boxHeight = labels.length * 22 + 10;
+  const anchorY = clamp(yAt(series[0][index]), PLOT.top, canvas.height - PLOT.bottom);
+  const boxX = clamp(x + 12, PLOT.left + 2, canvas.width - PLOT.right - boxWidth - 2);
+  const boxY = clamp(anchorY - boxHeight - 12, PLOT.top + 2, canvas.height - PLOT.bottom - boxHeight - 2);
+  ctx.fillStyle = "rgba(255,255,255,0.97)"; ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+  ctx.strokeStyle = "#64748b"; ctx.lineWidth = 1; ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+  labels.forEach((label, i) => { ctx.fillStyle = colors[i]; ctx.fillText(label, boxX + 10, boxY + 22 + i * 22); });
+  ctx.restore();
 }
 
 // Retain extrema and endpoints in chronological order in every display bucket.
@@ -405,6 +445,7 @@ function addViewportControls(canvas) {
     if (!capture || event.button !== 0) return;
     const { x, y } = canvasPosition(canvas, event);
     if (x < PLOT.left || x > canvas.width - PLOT.right || y < PLOT.top || y > canvas.height - PLOT.bottom) return;
+    inspectAmplitude(canvas, event);
     if (measuring) {
       const seconds = timeAtPointer(canvas, event);
       const distances = cursors.map(index => index === null ? Infinity : Math.abs(index / capture.sampleRate - seconds));
@@ -412,14 +453,17 @@ function addViewportControls(canvas) {
       let which = distances[0] <= distances[1] ? 0 : 1;
       if (distances[which] > hitDistance && cursors.includes(null)) which = cursors.indexOf(null);
       drag = { canvas, cursor: which }; setCursor(which, seconds);
-    } else drag = { canvas, x: event.clientX, start: viewStart };
+    } else drag = event.pointerType === "touch" ? { canvas, inspect: true } : { canvas, x: event.clientX, start: viewStart };
     canvas.setPointerCapture(event.pointerId);
   });
   canvas.addEventListener("pointermove", event => {
-    if (!drag || drag.canvas !== canvas) return;
-    if (drag.cursor !== undefined) { setCursor(drag.cursor, timeAtPointer(canvas, event)); return; }
+    if (!capture) return;
+    if (!drag || drag.canvas !== canvas) { inspectAmplitude(canvas, event); return; }
+    if (drag.inspect) { inspectAmplitude(canvas, event); return; }
+    if (drag.cursor !== undefined) { setCursor(drag.cursor, timeAtPointer(canvas, event)); inspectAmplitude(canvas, event); return; }
     const rect = canvas.getBoundingClientRect(), pixels = (event.clientX - drag.x) * canvas.width / rect.width;
     setView(drag.start - pixels * viewSeconds / (canvas.width - PLOT.left - PLOT.right), viewSeconds);
+    inspectAmplitude(canvas, event);
   });
   const stopDragging = event => { if (drag && drag.canvas === canvas) { if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId); drag = undefined; } };
   canvas.addEventListener("pointerup", stopDragging); canvas.addEventListener("pointercancel", stopDragging); canvas.addEventListener("lostpointercapture", () => { drag = undefined; });

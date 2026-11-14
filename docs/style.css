@@ -19,3 +19,5 @@
 
 .analysis-controls button[aria-pressed="true"]{background:#1769aa;color:white;border-color:#1769aa}
 #chartLegend[hidden]{display:none}
+
+.amplitude-readout{display:block;min-height:1.5em;margin-top:.45rem;font-weight:650;font-variant-numeric:tabular-nums}.amplitude-help{margin:.15rem 0 .35rem;font-size:.8rem;color:color-mix(in srgb,CanvasText 70%,Canvas)}
