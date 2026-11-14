@@ -1,3 +1,12 @@
+## Automatic Windows batch programmer
+
+For one-at-a-time updates, use the ready-to-run Windows package and
+[batch-programmer instructions](tools/batch_programmer/README.md).
+It includes H8.2, its checksum, Python and Picotool; no Python setup is needed.
+Click Start, connect one running EggBert, wait for verified green success, and
+unplug before connecting the next. First confirm one complete cycle on the
+school PC. Blank/BOOTSEL-only recovery boards use the manual procedure below.
+
 ## Current firmware: H8.2 (November 13, 2026)
 
 H8.2 changes only Hammer Hit detection: after the unchanged turn/back/pause
