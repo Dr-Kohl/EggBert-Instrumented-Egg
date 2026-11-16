@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hammer Hit: Launch, Measure, Verify | EggBert Tutorial</title>
+  <link rel="stylesheet" href="../style.css?v=amplitude-1">
+  <link rel="stylesheet" href="tutorial.css?v=full-width-1">
+</head>
+<body><main class="tutorial">
+  <header class="brand"><img class="brand-logo" src="../assets/eccv-logo.png" alt="Engineering, Computing, and Christian Vocation"><h1>Hammer Hit: Launch, Measure, Verify</h1></header>
+  <nav class="tutorial-nav" aria-label="Tutorial navigation"><a class="file-button" href="index.html">Back to Tutorial menu</a><a class="file-button" href="hammer-hit-arming.html">Arming procedure</a><a class="file-button" href="../index.html">Capture Viewer</a></nav>
+  <p>Choose a release angle that sends your protected EggBert as far as possible while keeping its peak acceleration below 100 g and limiting its total time above 20 g. The protective construction around EggBert is the vehicle; the apparatus and supporting cart stay fixed.</p>
+  <figure class="woodcut"><img src="images/eggbert-hammer-launch-measure-woodcut-v2.png" width="1536" height="1024" alt="Two-panel Hammer Hit guide: freely release the pivoted hammer from a chosen angle without pushing, then measure from the hammer-face floor reference to the nearest edge of the stopped wrapped EggBert. A schematic trace shows an initial strike, a taller first floor landing, and a smaller bounce, with every interval above 20 g shaded."></figure>
+  <p><a href="images/eggbert-hammer-launch-measure-woodcut-v2.png">Open full-size illustration</a></p>
+  <section class="current-guide" aria-label="Experiment procedure"><h2>Launch and measure</h2>
+    <ol>
+      <li><a href="hammer-hit-arming.html">Arm EggBert</a>, then position the protected package at the hammer's striking position. Handle gently once armed.</li>
+      <li>Raise the hammer to your chosen release angle. <strong>Release it without pushing.</strong></li>
+      <li>Let the wrapped EggBert travel and come to rest. Only EggBert and its protective construction move; the test apparatus stays fixed.</li>
+      <li>Measure the distance along the floor from the reference aligned with the hammer's striking face at its lowest position to the <strong>nearest edge of the wrapped EggBert after it stops</strong>. Record distance in meters.</li>
+      <li><a href="download.html">Download and save the recording</a>. Select <strong>Hammer Hit analysis</strong> in the Capture Viewer to read MAX g and total time above 20 g.</li>
+    </ol>
+    <p>The first floor-landing peak can exceed the initial hammer-strike peak after EggBert falls about 30 inches from the table. The illustration is schematic, not measured data; actual peaks may be much sharper.</p>
+  </section>
+  <section class="current-guide" aria-label="Score and verification"><h2>Score and verification</h2>
+    <p><strong>Score = 50 × (d<sub>vehicle</sub> / 3 m) + 50 × (1 − T<sub>&gt;20g</sub> / 100 ms)</strong></p>
+    <ul>
+      <li><strong>d<sub>vehicle</sub>:</strong> the measured distance to the nearest edge, in meters.</li>
+      <li><strong>T<sub>&gt;20g</sub>:</strong> sum <strong>all</strong> time above 20 g through launch and every impact until settled. Use milliseconds, not seconds.</li>
+      <li><strong>Peak must stay below 100 g.</strong> A peak at or above 100 g makes the score zero.</li>
+      <li>The formula is <strong>uncapped</strong>; do not limit its result to 0–100.</li>
+    </ul>
+    <p><strong>These are lab metrics, not human injury criteria.</strong></p>
+  </section>
+</main></body>
+</html>
