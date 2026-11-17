@@ -1,5 +1,8 @@
 # EggBert RP2354A board bring-up
 
+For fast one-at-a-time Windows updates, see the
+[automatic batch programmer](tools/batch_programmer/README.md), with H8.2 included.
+
 ## Latest firmware: H8.2 (November 13, 2026)
 
 H8.2 keeps the turn/back/pause arming gesture and triggers Hammer Hit on the
